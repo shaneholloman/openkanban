@@ -53,7 +53,7 @@ type UIConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Defaults: BoardSettings{
-			DefaultAgent:     "claude",
+			DefaultAgent:     "opencode",
 			WorktreeBase:     "",
 			AutoSpawnAgent:   true,
 			AutoCreateBranch: true,
