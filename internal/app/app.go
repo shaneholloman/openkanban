@@ -53,7 +53,6 @@ func CreateBoard(cfg *config.Config, name, repoPath string) error {
 		AutoSpawnAgent:   cfg.Defaults.AutoSpawnAgent,
 		AutoCreateBranch: cfg.Defaults.AutoCreateBranch,
 		BranchPrefix:     cfg.Defaults.BranchPrefix,
-		TmuxPrefix:       cfg.Defaults.TmuxPrefix,
 	}
 
 	if settings.WorktreeBase == "" {

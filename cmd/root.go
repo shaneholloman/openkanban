@@ -21,8 +21,8 @@ var rootCmd = &cobra.Command{
 	Long: `OpenKanban is a terminal-based kanban board that helps you manage
 multiple AI coding agents across different tasks and git worktrees.
 
-Each ticket can spawn an isolated agent session in tmux, with its own
-git worktree for safe parallel development.`,
+Each ticket spawns an embedded terminal pane with its own git worktree
+for safe parallel development.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load(cfgFile)
 		if err != nil {

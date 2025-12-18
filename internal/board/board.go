@@ -54,7 +54,6 @@ type Ticket struct {
 	// Agent integration
 	AgentType   string      `json:"agent_type,omitempty"`
 	AgentStatus AgentStatus `json:"agent_status"`
-	TmuxSession string      `json:"tmux_session,omitempty"`
 
 	// Timestamps
 	CreatedAt   time.Time  `json:"created_at"`
@@ -100,7 +99,6 @@ type BoardSettings struct {
 	AutoSpawnAgent   bool   `json:"auto_spawn_agent"`
 	AutoCreateBranch bool   `json:"auto_create_branch"`
 	BranchPrefix     string `json:"branch_prefix"`
-	TmuxPrefix       string `json:"tmux_prefix"`
 }
 
 // Board represents a kanban board

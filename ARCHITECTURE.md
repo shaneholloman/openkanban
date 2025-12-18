@@ -19,8 +19,8 @@ Agent Board is a TUI application built with Go and Bubbletea that orchestrates A
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Core Engine                               │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
-│  │ Ticket Store │  │ Git Manager  │  │Agent Manager │          │
-│  │  (JSON/SQL)  │  │  (worktrees) │  │   (tmux)     │          │
+│  │ Ticket Store │  │ Git Manager  │  │Terminal Panes│          │
+│  │  (JSON/SQL)  │  │  (worktrees) │  │   (PTY)      │          │
 │  └──────────────┘  └──────────────┘  └──────────────┘          │
 └─────────────────────────────────────────────────────────────────┘
          │                   │                   │
@@ -28,8 +28,8 @@ Agent Board is a TUI application built with Go and Bubbletea that orchestrates A
 ┌─────────────────────────────────────────────────────────────────┐
 │                     System Layer                                 │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
-│  │  Filesystem  │  │     Git      │  │    tmux      │          │
-│  │ (.openkanban) │  │  (worktrees) │  │  (sessions)  │          │
+│  │  Filesystem  │  │     Git      │  │  PTY/vt10x   │          │
+│  │ (.openkanban) │  │  (worktrees) │  │ (terminals)  │          │
 │  └──────────────┘  └──────────────┘  └──────────────┘          │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -146,54 +146,70 @@ func (m *Manager) RemoveWorktree(ticket *core.Ticket) error {
 }
 ```
 
-### 4. Agent Layer (`internal/agent/`)
+### 4. Terminal Layer (`internal/terminal/`)
 
-Spawns and monitors AI coding agents:
+Embedded PTY-based terminal panes using `creack/pty` and `hinshun/vt10x`:
+
+```go
+// Pane represents an embedded terminal running an agent
+type Pane struct {
+	id      string
+	pty     *os.File
+	vt      *vt10x.VT
+	cmd     *exec.Cmd
+	workdir string
+	width   int
+	height  int
+}
+
+// Start launches a command in the PTY
+func (p *Pane) Start(command string, args ...string) tea.Cmd {
+	cmd := exec.Command(command, args...)
+	cmd.Dir = p.workdir
+	
+	pty, err := pty.Start(cmd)
+	if err != nil {
+		return nil
+	}
+	p.pty = pty
+	p.cmd = cmd
+	
+	// Start reading output and updating vt10x terminal
+	go p.readLoop()
+	return p.tick()
+}
+
+// HandleKey forwards keyboard input to the PTY
+func (p *Pane) HandleKey(msg tea.KeyMsg) tea.Msg {
+	// Convert to escape sequence and write to PTY
+	p.pty.Write(keyToBytes(msg))
+	return nil
+}
+
+// View renders the terminal content from vt10x
+func (p *Pane) View() string {
+	return renderVT(p.vt, p.width, p.height)
+}
+```
+
+### 5. Agent Layer (`internal/agent/`)
+
+Agent configuration and status polling (lifecycle managed by Terminal layer):
 
 ```go
 type Manager struct {
-    config  *AgentConfig
-    running map[string]*AgentProcess  // ticketID -> process
+	config *config.Config
 }
 
-// SpawnAgent creates a tmux session and launches the agent
-func (m *Manager) SpawnAgent(ticket *core.Ticket, worktreePath string) error {
-    sessionName := fmt.Sprintf("ab-%s", ticket.Slug)
-    agentCmd := m.config.Agents[ticket.Agent].Command
-    agentArgs := m.config.Agents[ticket.Agent].Args
-    
-    // Create tmux session with agent running in worktree
-    cmd := exec.Command("tmux", "new-session", "-d",
-        "-s", sessionName,
-        "-c", worktreePath,
-        fmt.Sprintf("%s %s", agentCmd, strings.Join(agentArgs, " ")),
-    )
-    return cmd.Run()
+// GetAgentConfig returns config for an agent type
+func (m *Manager) GetAgentConfig(agentType string) (*config.AgentConfig, bool) {
+	cfg, ok := m.config.Agents[agentType]
+	return &cfg, ok
 }
 
-// GetStatus checks if an agent is running/working/idle
-func (m *Manager) GetStatus(ticket *core.Ticket) AgentStatus {
-    sessionName := fmt.Sprintf("ab-%s", ticket.Slug)
-    
-    // Check if tmux session exists
-    cmd := exec.Command("tmux", "has-session", "-t", sessionName)
-    if cmd.Run() != nil {
-        return StatusNotRunning
-    }
-    
-    // Check if agent process is active (ps-based detection)
-    // Similar to your claude-dashboard implementation
-    return m.detectAgentActivity(sessionName)
-}
-
-// AttachSession attaches to an agent's tmux session
-func (m *Manager) AttachSession(ticket *core.Ticket) error {
-    sessionName := fmt.Sprintf("ab-%s", ticket.Slug)
-    cmd := exec.Command("tmux", "attach-session", "-t", sessionName)
-    cmd.Stdin = os.Stdin
-    cmd.Stdout = os.Stdout
-    cmd.Stderr = os.Stderr
-    return cmd.Run()
+// StatusPollInterval returns the configured polling interval
+func (m *Manager) StatusPollInterval() time.Duration {
+	return time.Duration(m.config.UI.RefreshInterval) * time.Second
 }
 ```
 
@@ -273,7 +289,12 @@ User presses 'l' on backlog ticket
        │
        ▼
 ┌──────────────────┐
-│ Spawn Agent      │ ← tmux new-session -d -s ab-slug 'opencode'
+│ Create PTY Pane  │ ← terminal.New() with PTY
+└──────────────────┘
+       │
+       ▼
+┌──────────────────┐
+│ Start Agent      │ ← pane.Start("opencode") in worktree
 └──────────────────┘
        │
        ▼
@@ -294,17 +315,17 @@ User presses 'enter' on ticket
        │
        ▼
 ┌──────────────────┐
-│ Suspend TUI      │ ← tea.ExecProcess
+│ Focus Terminal   │ ← Switch to ModeAgentView
 └──────────────────┘
        │
        ▼
 ┌──────────────────┐
-│ Attach tmux      │ ← tmux attach -t ab-slug
+│ Show PTY Pane    │ ← Embedded terminal fills screen
 └──────────────────┘
        │
-       ▼ (user detaches with Ctrl-B D)
+       ▼ (user presses Ctrl-O to exit focus)
 ┌──────────────────┐
-│ Resume TUI       │ ← Board redraws, status refreshed
+│ Return to Board  │ ← Switch back to ModeNormal
 └──────────────────┘
 ```
 
@@ -374,26 +395,20 @@ default_agent: opencode
 agents:
   opencode:
     command: opencode
-    args: ["--continue"]
-    status_file: ~/.cache/opencode-status/{session}.status
+    args: []
+    status_file: .opencode/status.json
   claude:
     command: claude
-    args: []
-    status_file: ~/.cache/claude-status/{session}.status
+    args: ["--dangerously-skip-permissions"]
+    status_file: .claude/status.json
   aider:
     command: aider
-    args: ["--yes", "--no-auto-commits"]
+    args: ["--yes"]
 
-# tmux settings
-tmux:
-  session_prefix: ab-
-  attach_on_open: true
-
-# Status polling
-status:
-  poll_interval: 2s
-  use_status_files: true  # Read from status files if available
-  fallback_to_ps: true    # Fall back to ps-based detection
+# UI settings
+ui:
+  theme: catppuccin-mocha
+  refresh_interval: 5
 ```
 
 ## Error Handling

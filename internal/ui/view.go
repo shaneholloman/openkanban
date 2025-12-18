@@ -468,8 +468,6 @@ func (m *Model) renderSettingsView() string {
 			}
 		case "branch_prefix":
 			value = s.BranchPrefix
-		case "tmux_prefix":
-			value = s.TmuxPrefix
 		}
 
 		cursor := "  "

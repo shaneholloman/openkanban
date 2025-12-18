@@ -28,7 +28,6 @@ type BoardSettings struct {
 	AutoSpawnAgent   bool   `json:"auto_spawn_agent"`
 	AutoCreateBranch bool   `json:"auto_create_branch"`
 	BranchPrefix     string `json:"branch_prefix"`
-	TmuxPrefix       string `json:"tmux_prefix"`
 }
 
 // AgentConfig defines how to spawn and monitor an AI agent
@@ -58,7 +57,6 @@ func DefaultConfig() *Config {
 			AutoSpawnAgent:   true,
 			AutoCreateBranch: true,
 			BranchPrefix:     "agent/",
-			TmuxPrefix:       "ab-",
 		},
 		Agents: map[string]AgentConfig{
 			"claude": {

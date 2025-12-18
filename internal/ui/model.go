@@ -385,7 +385,6 @@ var settingsFields = []settingsField{
 	{"auto_spawn_agent", "Auto Spawn Agent", "bool"},
 	{"auto_create_branch", "Auto Create Branch", "bool"},
 	{"branch_prefix", "Branch Prefix", "string"},
-	{"tmux_prefix", "Tmux Prefix", "string"},
 }
 
 func (m *Model) handleSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -465,8 +464,6 @@ func (m *Model) getSettingsValue(key string) string {
 		return s.WorktreeBase
 	case "branch_prefix":
 		return s.BranchPrefix
-	case "tmux_prefix":
-		return s.TmuxPrefix
 	}
 	return ""
 }
@@ -480,8 +477,6 @@ func (m *Model) applySettingsValue(key, value string) {
 		s.WorktreeBase = value
 	case "branch_prefix":
 		s.BranchPrefix = value
-	case "tmux_prefix":
-		s.TmuxPrefix = value
 	}
 }
 
