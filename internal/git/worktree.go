@@ -178,3 +178,33 @@ func sanitizeBranchName(name string) string {
 
 	return name
 }
+
+func ResolveMainRepo(path string) string {
+	gitPath := filepath.Join(path, ".git")
+	info, err := os.Stat(gitPath)
+	if err != nil {
+		return path
+	}
+
+	if info.IsDir() {
+		return path
+	}
+
+	content, err := os.ReadFile(gitPath)
+	if err != nil {
+		return path
+	}
+
+	line := strings.TrimSpace(string(content))
+	if !strings.HasPrefix(line, "gitdir: ") {
+		return path
+	}
+
+	gitdir := strings.TrimPrefix(line, "gitdir: ")
+
+	if idx := strings.Index(gitdir, "/.git/worktrees/"); idx != -1 {
+		return gitdir[:idx]
+	}
+
+	return path
+}

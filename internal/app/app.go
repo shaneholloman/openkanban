@@ -130,7 +130,9 @@ func findBoard(cfg *config.Config, path string) (*board.Board, error) {
 	}
 
 	// If path is a repo path, find matching board
+	// Resolve worktree to main repo so worktrees share the same board
 	absPath, _ := filepath.Abs(path)
+	absPath = git.ResolveMainRepo(absPath)
 	entries, _ := os.ReadDir(dir)
 	for _, entry := range entries {
 		if filepath.Ext(entry.Name()) == ".json" {
