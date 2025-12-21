@@ -31,6 +31,8 @@ const (
 	ModeEditTicket   Mode = "EDIT"
 	ModeAgentView    Mode = "AGENT"
 	ModeSettings     Mode = "SETTINGS"
+	ModeShuttingDown Mode = "SHUTTING_DOWN"
+	ModeSpawning     Mode = "SPAWNING"
 )
 
 const (
@@ -92,6 +94,9 @@ type Model struct {
 	panes          map[board.TicketID]*terminal.Pane
 	focusedPane    board.TicketID
 	statusDetector *agent.StatusDetector
+
+	spawningTicketID board.TicketID
+	spawningAgent    string
 
 	settingsIndex   int
 	settingsEditing bool
@@ -175,6 +180,88 @@ func (m *Model) Init() tea.Cmd {
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.mode == ModeShuttingDown {
+		switch msg := msg.(type) {
+		case shutdownCompleteMsg:
+			return m, tea.Quit
+		case spinner.TickMsg:
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
+		return m, nil
+	}
+
+	if m.mode == ModeSpawning {
+		switch msg := msg.(type) {
+		case spawnReadyMsg:
+			if msg.ticketID != m.spawningTicketID {
+				return m, nil
+			}
+
+			ticket, _ := m.globalStore.Get(msg.ticketID)
+			if ticket != nil {
+				ticket.AgentType = m.spawningAgent
+				ticket.AgentStatus = board.AgentIdle
+				if ticket.AgentSpawnedAt == nil {
+					now := time.Now()
+					ticket.AgentSpawnedAt = &now
+				}
+				m.saveTicket(ticket)
+			}
+
+			m.panes[msg.ticketID] = msg.pane
+			m.focusedPane = msg.ticketID
+			return m, msg.pane.Start(msg.command, msg.args...)
+
+		case spawnErrorMsg:
+			if msg.ticketID == m.spawningTicketID {
+				m.mode = ModeNormal
+				m.spawningTicketID = ""
+				m.spawningAgent = ""
+				m.notify(msg.err)
+			}
+			return m, nil
+
+		case terminal.OutputMsg:
+			if board.TicketID(msg.PaneID) == m.spawningTicketID {
+				m.mode = ModeAgentView
+				m.spawningTicketID = ""
+				m.spawningAgent = ""
+			}
+			return m.handleTerminalMsg(msg)
+
+		case terminal.ExitMsg:
+			if board.TicketID(msg.PaneID) == m.spawningTicketID {
+				m.mode = ModeNormal
+				m.spawningTicketID = ""
+				m.spawningAgent = ""
+				delete(m.panes, m.spawningTicketID)
+				m.notify("Agent failed to start")
+			}
+			return m, nil
+
+		case spinner.TickMsg:
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+
+		case tea.KeyMsg:
+			if msg.String() == "esc" {
+				if pane, ok := m.panes[m.spawningTicketID]; ok {
+					pane.Stop()
+					delete(m.panes, m.spawningTicketID)
+				}
+				m.mode = ModeNormal
+				m.spawningTicketID = ""
+				m.spawningAgent = ""
+				m.notify("Cancelled")
+				return m, nil
+			}
+		}
+		return m, nil
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -247,7 +334,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		if m.mode == ModeNormal {
-			return m, tea.Quit
+			return m.handleQuit()
 		}
 	case "esc":
 		if m.mode == ModeAgentView {
@@ -557,6 +644,29 @@ func (m *Model) handleConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showConfirm = false
 	}
 	return m, nil
+}
+
+func (m *Model) handleQuit() (tea.Model, tea.Cmd) {
+	runningCount := m.RunningAgentCount()
+	if runningCount == 0 {
+		return m, tea.Quit
+	}
+
+	m.showConfirm = true
+	m.confirmMsg = fmt.Sprintf("%d agent(s) running. Quit anyway? [y/N]", runningCount)
+	m.confirmFn = func() tea.Cmd {
+		m.mode = ModeShuttingDown
+		m.showConfirm = false
+		return tea.Batch(m.spinner.Tick, m.cleanupAsync())
+	}
+	return m, nil
+}
+
+func (m *Model) cleanupAsync() tea.Cmd {
+	return func() tea.Msg {
+		m.Cleanup()
+		return shutdownCompleteMsg{}
+	}
 }
 
 func (m *Model) handleAgentViewMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1228,13 +1338,6 @@ func (m *Model) spawnAgent() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if ticket.WorktreePath == "" {
-		if err := m.setupWorktree(ticket); err != nil {
-			m.notify("Failed to create worktree: " + err.Error())
-			return m, nil
-		}
-	}
-
 	agentType := proj.Settings.DefaultAgent
 	if agentType == "" {
 		agentType = m.config.Defaults.DefaultAgent
@@ -1245,33 +1348,107 @@ func (m *Model) spawnAgent() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	pane := terminal.New(string(ticket.ID), m.width, m.height-2)
-	pane.SetWorkdir(ticket.WorktreePath)
-	m.panes[ticket.ID] = pane
+	m.mode = ModeSpawning
+	m.spawningTicketID = ticket.ID
+	m.spawningAgent = agentType
 
-	ticket.AgentType = agentType
-	ticket.AgentStatus = board.AgentIdle
+	return m, tea.Batch(m.spinner.Tick, m.prepareSpawn(ticket, proj, agentCfg))
+}
 
-	isNewSession := agent.ShouldInjectContext(ticket)
-	args := m.buildAgentArgs(agentCfg, ticket, isNewSession)
+func (m *Model) prepareSpawn(ticket *board.Ticket, proj *project.Project, agentCfg config.AgentConfig) tea.Cmd {
+	ticketID := ticket.ID
+	worktreePath := ticket.WorktreePath
+	branchName := ticket.BranchName
+	baseBranch := ticket.BaseBranch
+	width, height := m.width, m.height-2
 
-	if isNewSession {
-		now := time.Now()
-		ticket.AgentSpawnedAt = &now
+	agentType := agentCfg.Command
+	if strings.Contains(agentType, "/") {
+		agentType = filepath.Base(agentType)
 	}
 
-	m.saveTicket(ticket)
+	mgr := m.worktreeMgrs[proj.ID]
+	cfg := m.config
 
-	if isNewSession {
-		m.notify("Starting " + agentType)
-	} else {
-		m.notify("Resuming " + agentType)
+	return func() tea.Msg {
+		if worktreePath == "" {
+			if mgr == nil {
+				return spawnErrorMsg{ticketID: ticketID, err: "worktree manager not found"}
+			}
+
+			generatedBranch := branchName
+			if generatedBranch == "" {
+				maxLen := proj.GetSlugMaxLength()
+				slug := board.Slugify(ticket.Title, maxLen)
+				template := proj.GetBranchTemplate()
+				prefix := proj.GetBranchPrefix()
+				generatedBranch = strings.ReplaceAll(template, "{prefix}", prefix)
+				generatedBranch = strings.ReplaceAll(generatedBranch, "{slug}", slug)
+			}
+
+			base, _ := mgr.GetDefaultBranch()
+			if baseBranch != "" {
+				base = baseBranch
+			}
+
+			path, err := mgr.CreateWorktree(generatedBranch, base)
+			if err != nil {
+				return spawnErrorMsg{ticketID: ticketID, err: "worktree failed: " + err.Error()}
+			}
+			worktreePath = path
+			branchName = generatedBranch
+			baseBranch = base
+		}
+
+		pane := terminal.New(string(ticketID), width, height)
+		pane.SetWorkdir(worktreePath)
+
+		isNewSession := ticket.AgentSpawnedAt == nil
+		args := make([]string, len(agentCfg.Args))
+		copy(args, agentCfg.Args)
+
+		promptTemplate := cfg.GetEffectiveInitPrompt(agentType)
+
+		switch agentType {
+		case "claude":
+			if isNewSession && promptTemplate != "" {
+				prompt := agent.BuildContextPrompt(promptTemplate, ticket)
+				if prompt != "" {
+					args = append(args, "--append-system-prompt", prompt)
+				}
+			} else if !isNewSession {
+				hasFlag := false
+				for _, arg := range args {
+					if arg == "--continue" || arg == "-c" {
+						hasFlag = true
+						break
+					}
+				}
+				if !hasFlag {
+					args = append(args, "--continue")
+				}
+			}
+		case "opencode":
+			args = append([]string{worktreePath}, args...)
+			if isNewSession && promptTemplate != "" {
+				prompt := agent.BuildContextPrompt(promptTemplate, ticket)
+				if prompt != "" {
+					args = append(args, "-p", prompt)
+				}
+			} else if !isNewSession {
+				if sessionID := agent.FindOpencodeSession(worktreePath); sessionID != "" {
+					args = append(args, "--session", sessionID)
+				}
+			}
+		}
+
+		return spawnReadyMsg{
+			ticketID: ticketID,
+			pane:     pane,
+			command:  agentCfg.Command,
+			args:     args,
+		}
 	}
-
-	m.mode = ModeAgentView
-	m.focusedPane = ticket.ID
-
-	return m, pane.Start(agentCfg.Command, args...)
 }
 
 func (m *Model) buildAgentArgs(cfg config.AgentConfig, ticket *board.Ticket, isNewSession bool) []string {
@@ -1421,13 +1598,34 @@ func (m *Model) saveTicket(ticket *board.Ticket) {
 	}
 }
 
+func (m *Model) RunningAgentCount() int {
+	count := 0
+	for _, pane := range m.panes {
+		if pane.Running() {
+			count++
+		}
+	}
+	return count
+}
+
+const gracefulShutdownTimeout = 3 * time.Second
+
+func (m *Model) Cleanup() {
+	for _, pane := range m.panes {
+		if pane.Running() {
+			pane.StopGraceful(gracefulShutdownTimeout)
+		}
+	}
+}
+
 func (m *Model) pollAgentStatusesAsync() tea.Cmd {
 	type paneInfo struct {
-		ticketID     board.TicketID
-		agentType    string
-		worktreePath string
-		branchName   string
-		running      bool
+		ticketID        board.TicketID
+		agentType       string
+		worktreePath    string
+		branchName      string
+		running         bool
+		terminalContent string
 	}
 
 	var panes []paneInfo
@@ -1437,11 +1635,12 @@ func (m *Model) pollAgentStatusesAsync() tea.Cmd {
 			continue
 		}
 		panes = append(panes, paneInfo{
-			ticketID:     ticketID,
-			agentType:    ticket.AgentType,
-			worktreePath: ticket.WorktreePath,
-			branchName:   ticket.BranchName,
-			running:      pane.Running(),
+			ticketID:        ticketID,
+			agentType:       ticket.AgentType,
+			worktreePath:    ticket.WorktreePath,
+			branchName:      ticket.BranchName,
+			running:         pane.Running(),
+			terminalContent: pane.GetContent(),
 		})
 	}
 
@@ -1465,7 +1664,7 @@ func (m *Model) pollAgentStatusesAsync() tea.Cmd {
 				}
 			}
 
-			results[p.ticketID] = detector.DetectStatus(p.agentType, sessionID, true)
+			results[p.ticketID] = detector.DetectStatus(p.agentType, sessionID, true, p.terminalContent)
 		}
 		return results
 	}
@@ -1484,6 +1683,19 @@ func (m *Model) handleTerminalMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 type agentStatusMsg time.Time
 type agentStatusResultMsg map[board.TicketID]board.AgentStatus
 type notificationMsg time.Time
+type shutdownCompleteMsg struct{}
+
+type spawnReadyMsg struct {
+	ticketID board.TicketID
+	pane     *terminal.Pane
+	command  string
+	args     []string
+}
+
+type spawnErrorMsg struct {
+	ticketID board.TicketID
+	err      string
+}
 
 func tickAgentStatus(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(t time.Time) tea.Msg {

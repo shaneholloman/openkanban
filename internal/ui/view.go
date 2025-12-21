@@ -13,6 +13,14 @@ func (m *Model) View() string {
 		return "Loading..."
 	}
 
+	if m.mode == ModeShuttingDown {
+		return m.renderShuttingDown()
+	}
+
+	if m.mode == ModeSpawning {
+		return m.renderSpawning()
+	}
+
 	if m.mode == ModeAgentView && m.focusedPane != "" {
 		return m.renderAgentView()
 	}
@@ -524,6 +532,60 @@ func (m *Model) renderConfirmDialog() string {
 		BorderForeground(colorRed).
 		Padding(1, 2).
 		Render(content)
+}
+
+func (m *Model) renderShuttingDown() string {
+	count := m.RunningAgentCount()
+	msg := fmt.Sprintf("Stopping %d agent(s)...", count)
+
+	titleStyle := lipgloss.NewStyle().
+		Foreground(colorYellow).
+		Bold(true)
+
+	content := titleStyle.Render(m.spinner.View()+" Shutting Down") + "\n\n" +
+		"  " + lipgloss.NewStyle().Foreground(colorText).Render(msg)
+
+	dialog := lipgloss.NewStyle().
+		Border(columnBorder).
+		BorderForeground(colorYellow).
+		Padding(1, 2).
+		Render(content)
+
+	return lipgloss.Place(
+		m.width,
+		m.height,
+		lipgloss.Center,
+		lipgloss.Center,
+		dialog,
+	)
+}
+
+func (m *Model) renderSpawning() string {
+	agentName := m.spawningAgent
+	if agentName == "" {
+		agentName = "agent"
+	}
+
+	titleStyle := lipgloss.NewStyle().
+		Foreground(colorGreen).
+		Bold(true)
+
+	content := titleStyle.Render(m.spinner.View()+" Starting "+agentName) + "\n\n" +
+		"  " + dimStyle.Render("[Esc] Cancel")
+
+	dialog := lipgloss.NewStyle().
+		Border(columnBorder).
+		BorderForeground(colorGreen).
+		Padding(1, 2).
+		Render(content)
+
+	return lipgloss.Place(
+		m.width,
+		m.height,
+		lipgloss.Center,
+		lipgloss.Center,
+		dialog,
+	)
 }
 
 func (m *Model) renderTicketForm() string {

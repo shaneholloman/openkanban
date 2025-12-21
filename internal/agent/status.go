@@ -55,31 +55,125 @@ func NewStatusDetector() *StatusDetector {
 	}
 }
 
-// DetectStatus returns the current agent status.
-// For OpenCode: queries the native REST API on port 4096.
-// For other agents: checks hook-written status files only.
-// No terminal heuristics - they're unreliable.
-func (d *StatusDetector) DetectStatus(agentType, sessionID string, processRunning bool) board.AgentStatus {
+func (d *StatusDetector) DetectStatus(agentType, sessionID string, processRunning bool, terminalContent string) board.AgentStatus {
 	if !processRunning {
 		return board.AgentNone
 	}
 
-	// Check hook-written status files first (works for any agent with configured hooks)
 	if status := d.readStatusFile(sessionID); status != board.AgentNone {
 		return status
 	}
 
-	// For OpenCode, query the native API
 	if agentType == "opencode" && sessionID != "" {
 		if status := d.queryOpencodeAPI(sessionID); status != board.AgentNone {
 			return status
 		}
 	}
 
-	// For agents without native API support or when API is unavailable,
-	// return AgentIdle as a safe default when process is running.
-	// Users can configure hooks to write status files for accurate tracking.
+	if terminalContent != "" {
+		if status := d.detectFromTerminalContent(agentType, terminalContent); status != board.AgentNone {
+			return status
+		}
+	}
+
 	return board.AgentIdle
+}
+
+func (d *StatusDetector) detectFromTerminalContent(agentType, content string) board.AgentStatus {
+	contentLower := strings.ToLower(content)
+	lines := strings.Split(content, "\n")
+
+	lastLines := lines
+	if len(lines) > 10 {
+		lastLines = lines[len(lines)-10:]
+	}
+	recentContent := strings.Join(lastLines, "\n")
+	recentLower := strings.ToLower(recentContent)
+
+	switch agentType {
+	case "opencode", "claude":
+		return d.detectCodingAgentStatus(recentLower, contentLower)
+	default:
+		return d.detectGenericAgentStatus(recentLower)
+	}
+}
+
+func (d *StatusDetector) detectCodingAgentStatus(recentLower, fullLower string) board.AgentStatus {
+	waitingPatterns := []string{
+		"waiting for",
+		"do you want",
+		"would you like",
+		"[y/n]",
+		"(y/n)",
+		"press enter",
+		"confirm",
+		"permission",
+		"approve",
+	}
+	for _, pattern := range waitingPatterns {
+		if strings.Contains(recentLower, pattern) {
+			return board.AgentWaiting
+		}
+	}
+
+	workingPatterns := []string{
+		"thinking",
+		"processing",
+		"running",
+		"executing",
+		"writing",
+		"reading",
+		"searching",
+		"analyzing",
+		"generating",
+		"...",
+		"━",
+		"█",
+		"▓",
+	}
+	for _, pattern := range workingPatterns {
+		if strings.Contains(recentLower, pattern) {
+			return board.AgentWorking
+		}
+	}
+
+	errorPatterns := []string{
+		"error:",
+		"failed:",
+		"exception:",
+		"rate limit",
+		"quota exceeded",
+		"api error",
+	}
+	for _, pattern := range errorPatterns {
+		if strings.Contains(recentLower, pattern) {
+			return board.AgentError
+		}
+	}
+
+	idlePatterns := []string{
+		">",
+		"$",
+		"ready",
+		"idle",
+	}
+	for _, pattern := range idlePatterns {
+		if strings.HasSuffix(strings.TrimSpace(recentLower), pattern) {
+			return board.AgentIdle
+		}
+	}
+
+	return board.AgentNone
+}
+
+func (d *StatusDetector) detectGenericAgentStatus(recentLower string) board.AgentStatus {
+	if strings.Contains(recentLower, "error") || strings.Contains(recentLower, "failed") {
+		return board.AgentError
+	}
+	if strings.Contains(recentLower, "...") || strings.Contains(recentLower, "processing") {
+		return board.AgentWorking
+	}
+	return board.AgentNone
 }
 
 func (d *StatusDetector) queryOpencodeAPI(sessionID string) board.AgentStatus {

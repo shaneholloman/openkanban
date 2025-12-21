@@ -3,7 +3,9 @@ package app
 import (
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/techdufus/openkanban/internal/agent"
@@ -40,7 +42,19 @@ func Run(cfg *config.Config, filterPath string) error {
 	agentMgr := agent.NewManager(cfg)
 	model := ui.NewModel(cfg, globalStore, agentMgr, filterProjectID)
 
+	defer model.Cleanup()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGTERM)
+
 	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+
+	go func() {
+		<-sigChan
+		model.Cleanup()
+		program.Quit()
+	}()
+
 	_, err = program.Run()
 	return err
 }

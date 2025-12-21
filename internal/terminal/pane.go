@@ -173,6 +173,43 @@ func (p *Pane) Stop() error {
 	return nil
 }
 
+// StopGraceful sends SIGTERM, waits for timeout, then SIGKILL if needed.
+func (p *Pane) StopGraceful(timeout time.Duration) error {
+	p.mu.Lock()
+	if !p.running || p.cmd == nil || p.cmd.Process == nil {
+		p.mu.Unlock()
+		return nil
+	}
+
+	proc := p.cmd.Process
+	p.mu.Unlock()
+
+	if err := proc.Signal(os.Interrupt); err != nil {
+		return p.Stop()
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := proc.Wait()
+		done <- err
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		proc.Kill()
+	}
+
+	p.mu.Lock()
+	if p.pty != nil {
+		p.pty.Close()
+	}
+	p.running = false
+	p.mu.Unlock()
+
+	return nil
+}
+
 var ErrPaneNotRunning = fmt.Errorf("pane is not running")
 
 func (p *Pane) WriteInput(data []byte) (int, error) {
