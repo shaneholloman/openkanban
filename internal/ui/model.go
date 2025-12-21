@@ -602,7 +602,7 @@ func (m *Model) handleTicketForm(msg tea.KeyMsg, isEdit bool) (tea.Model, tea.Cm
 	case "shift+tab":
 		return m.prevFormField(isEdit), nil
 
-	case "ctrl+s", "ctrl+enter":
+	case "ctrl+s":
 		return m.saveTicketForm(isEdit)
 
 	case "enter":
@@ -766,6 +766,7 @@ func (m *Model) saveTicketForm(isEdit bool) (tea.Model, tea.Cmd) {
 		ticket.Status = m.columns[m.activeColumn].Status
 		m.globalStore.Add(ticket)
 		m.refreshColumnTickets()
+		m.selectTicketByID(ticket.ID)
 		m.saveTicket(ticket)
 		m.notify("Created: " + title)
 	}
@@ -1133,6 +1134,7 @@ func (m *Model) quickMoveTicket() (tea.Model, tea.Cmd) {
 
 	m.globalStore.Move(ticket.ID, nextStatus)
 	m.refreshColumnTickets()
+	m.selectTicketByID(ticket.ID)
 	m.saveTicket(ticket)
 	m.notify("Moved to " + string(nextStatus))
 
@@ -1152,6 +1154,7 @@ func (m *Model) quickMoveTicketBackward() (tea.Model, tea.Cmd) {
 
 	m.globalStore.Move(ticket.ID, prevStatus)
 	m.refreshColumnTickets()
+	m.selectTicketByID(ticket.ID)
 	m.saveTicket(ticket)
 	m.notify("Moved to " + string(prevStatus))
 
@@ -1348,6 +1351,19 @@ func (m *Model) selectedTicket() *board.Ticket {
 		return nil
 	}
 	return tickets[m.activeTicket]
+}
+
+func (m *Model) selectTicketByID(ticketID board.TicketID) {
+	for colIdx, tickets := range m.columnTickets {
+		for ticketIdx, t := range tickets {
+			if t.ID == ticketID {
+				m.activeColumn = colIdx
+				m.activeTicket = ticketIdx
+				m.ensureTicketVisible()
+				return
+			}
+		}
+	}
 }
 
 func (m *Model) refreshColumnTickets() {
