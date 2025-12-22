@@ -109,6 +109,12 @@ type Model struct {
 
 	filterInput textinput.Model
 	filterQuery string
+
+	// Sidebar state
+	sidebarVisible bool
+	sidebarFocused bool
+	sidebarIndex   int // 0 = "All", 1+ = project index
+	sidebarWidth   int
 }
 
 func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, agentMgr *agent.Manager, filterProjectID string) *Model {
@@ -187,6 +193,8 @@ func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, agentM
 		panes:           make(map[board.TicketID]*terminal.Pane),
 		statusDetector:  agent.NewStatusDetector(),
 		selectedProject: selectedProject,
+		sidebarVisible:  cfg.UI.SidebarVisible,
+		sidebarWidth:    24,
 	}
 	m.refreshColumnTickets()
 	return m
@@ -421,7 +429,29 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *Model) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "tab":
+		if m.sidebarVisible {
+			m.sidebarFocused = !m.sidebarFocused
+			return m, nil
+		}
+	case "[":
+		m.sidebarVisible = !m.sidebarVisible
+		if !m.sidebarVisible {
+			m.sidebarFocused = false
+		}
+		return m, nil
+	}
+
+	if m.sidebarFocused {
+		return m.handleSidebarNav(msg)
+	}
+
+	switch msg.String() {
 	case "h", "left":
+		if m.activeColumn == 0 && m.sidebarVisible {
+			m.sidebarFocused = true
+			return m, nil
+		}
 		m.moveColumn(-1)
 	case "l", "right":
 		m.moveColumn(1)
@@ -472,6 +502,107 @@ func (m *Model) handleNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) openAddProjectForm() (tea.Model, tea.Cmd) {
+	m.showAddProjectForm = true
+	m.addProjectPath.SetValue("")
+	m.addProjectPath.Focus()
+	m.mode = ModeCreateTicket
+	m.ticketFormField = formFieldProject
+	return m, nil
+}
+
+func (m *Model) handleSidebarMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	headerHeight := 5
+	y := msg.Y - headerHeight
+
+	if y < 0 {
+		return m, nil
+	}
+
+	projects := m.globalStore.Projects()
+
+	// Line 0: "Projects" title
+	// Line 1: blank
+	// Line 2: "All (X)"
+	// Line 3: blank
+	// Line 4+i: project[i]
+	// Line 4+len: blank
+	// Line 5+len: "+ Add project"
+
+	if y == 2 {
+		m.sidebarIndex = 0
+		m.filterProjectID = ""
+		m.filterQuery = ""
+		m.refreshColumnTickets()
+		m.notify("Showing all projects")
+		return m, nil
+	}
+
+	projectStartY := 4
+	for i := range projects {
+		if y == projectStartY+i {
+			m.sidebarIndex = i + 1
+			m.filterProjectID = projects[i].ID
+			m.filterQuery = ""
+			m.refreshColumnTickets()
+			m.notify("Filtering: " + projects[i].Name)
+			return m, nil
+		}
+	}
+
+	addProjectY := 5 + len(projects)
+	if y == addProjectY {
+		return m.openAddProjectForm()
+	}
+
+	m.sidebarFocused = true
+	return m, nil
+}
+
+func (m *Model) handleSidebarNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	projects := m.globalStore.Projects()
+	addIndex := len(projects) + 1
+
+	switch msg.String() {
+	case "j", "down":
+		if m.sidebarIndex < addIndex {
+			m.sidebarIndex++
+		}
+	case "k", "up":
+		if m.sidebarIndex > 0 {
+			m.sidebarIndex--
+		}
+	case "enter":
+		if m.sidebarIndex == 0 {
+			m.filterProjectID = ""
+			m.filterQuery = ""
+			m.notify("Showing all projects")
+			m.refreshColumnTickets()
+			m.sidebarFocused = false
+		} else if m.sidebarIndex == addIndex {
+			return m.openAddProjectForm()
+		} else {
+			idx := m.sidebarIndex - 1
+			if idx < len(projects) {
+				m.filterProjectID = projects[idx].ID
+				m.filterQuery = ""
+				m.notify("Filtering: " + projects[idx].Name)
+			}
+			m.refreshColumnTickets()
+			m.sidebarFocused = false
+		}
+	case "l", "right":
+		m.sidebarFocused = false
+		return m, nil
+	case "a":
+		return m.openAddProjectForm()
+	case "esc":
+		m.sidebarFocused = false
+	}
+
+	return m, nil
+}
+
 func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	switch msg.Action {
 	case tea.MouseActionPress:
@@ -479,8 +610,12 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			if m.hitTestHeader(msg.X, msg.Y) {
 				return m, nil
 			}
+			if m.sidebarVisible && msg.X < m.sidebarWidth {
+				return m.handleSidebarMouse(msg)
+			}
 			col, ticket := m.hitTest(msg.X, msg.Y)
 			if col >= 0 {
+				m.sidebarFocused = false
 				m.activeColumn = col
 				if ticket >= 0 {
 					m.activeTicket = ticket
@@ -809,9 +944,28 @@ func (m *Model) handleEditTicketMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *Model) handleTicketForm(msg tea.KeyMsg, isEdit bool) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "ctrl+c":
+		m.mode = ModeNormal
+		m.blurAllFormFields()
+		m.editingTicketID = ""
+		m.branchLocked = false
+		m.showAddProjectForm = false
+		return m, nil
+
 	case "tab":
+		if m.showAddProjectForm && m.addProjectPath.Value() != "" {
+			m.createProjectFromPath()
+			if m.showAddProjectForm {
+				return m, nil
+			}
+		} else if m.showAddProjectForm {
+			m.showAddProjectForm = false
+		}
 		return m.nextFormField(isEdit), nil
 	case "shift+tab":
+		if m.showAddProjectForm {
+			m.showAddProjectForm = false
+		}
 		return m.prevFormField(isEdit), nil
 
 	case "ctrl+s":
@@ -1275,22 +1429,24 @@ func (m *Model) ensureColumnVisible() {
 }
 
 func (m *Model) calcColumnWidth() int {
-	if m.width == 0 || len(m.columns) == 0 {
+	boardW := m.boardWidth()
+	if boardW == 0 || len(m.columns) == 0 {
 		return minColumnWidth
 	}
 
 	numCols := len(m.columns)
 	totalOverhead := numCols * columnOverhead
-	colWidth := (m.width - totalOverhead) / numCols
+	colWidth := (boardW - totalOverhead) / numCols
 
 	return max(colWidth, minColumnWidth)
 }
 
 func (m *Model) visibleColumnCount(colWidth int) int {
-	if m.width == 0 {
+	boardW := m.boardWidth()
+	if boardW == 0 {
 		return len(m.columns)
 	}
-	visible := m.width / (colWidth + columnOverhead)
+	visible := boardW / (colWidth + columnOverhead)
 	visible = max(visible, 1)
 	if visible > len(m.columns) {
 		visible = len(m.columns)
@@ -1299,12 +1455,13 @@ func (m *Model) visibleColumnCount(colWidth int) int {
 }
 
 func (m *Model) distributeWidth(numCols int) (baseWidth, remainder int) {
-	if numCols == 0 || m.width == 0 {
+	boardW := m.boardWidth()
+	if numCols == 0 || boardW == 0 {
 		return minColumnWidth, 0
 	}
 	borders := numCols * 2
 	margins := numCols - 1
-	available := m.width - borders - margins
+	available := boardW - borders - margins
 	baseWidth = available / numCols
 	remainder = available % numCols
 	if baseWidth < minColumnWidth {

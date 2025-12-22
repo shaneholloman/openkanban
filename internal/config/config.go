@@ -119,6 +119,7 @@ type UIConfig struct {
 	RefreshInterval int    `json:"refresh_interval"`
 	ColumnWidth     int    `json:"column_width"`
 	TicketHeight    int    `json:"ticket_height"`
+	SidebarVisible  bool   `json:"sidebar_visible"`
 }
 
 // CleanupSettings controls cleanup behavior when deleting tickets
@@ -176,6 +177,7 @@ func DefaultConfig() *Config {
 			RefreshInterval: 5,
 			ColumnWidth:     40,
 			TicketHeight:    4,
+			SidebarVisible:  true,
 		},
 		Cleanup: CleanupSettings{
 			DeleteWorktree:       true,

@@ -33,7 +33,8 @@ OpenKanban configuration lives in `~/.config/openkanban/config.json`.
     "show_agent_status": true,
     "refresh_interval": 5,
     "column_width": 40,
-    "ticket_height": 4
+    "ticket_height": 4,
+    "sidebar_visible": true
   },
   "cleanup": {
     "delete_worktree": true,
@@ -122,6 +123,20 @@ Application behavior preferences:
 
 - `confirm_quit_with_agents` - Prompt before quitting when agents are running (default: true). Set to false to auto-close agents without confirmation.
 
+## UI
+
+Display preferences:
+
+```json
+{
+  "ui": {
+    "sidebar_visible": true
+  }
+}
+```
+
+- `sidebar_visible` - Show project sidebar on startup (default: true). Toggle with `[` key during use.
+
 ## Keybindings
 
 All keybindings are shown in-app with `?`. Custom keybindings coming soon.
@@ -143,8 +158,18 @@ All keybindings are shown in-app with `?`. Custom keybindings coming soon.
 | `S` | Stop agent |
 | `d` | Delete ticket |
 | `p` | Cycle project filter |
+| `[` | Toggle sidebar |
 | `?` | Show help |
 | `q` | Quit |
+
+### Sidebar
+
+| Key | Action |
+|-----|--------|
+| `h` | Focus sidebar (from column 0) |
+| `l` | Return to board |
+| `j/k` | Navigate projects |
+| `enter` | Select project filter |
 
 ### Agent View
 

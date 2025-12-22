@@ -39,7 +39,13 @@ func (m *Model) View() string {
 	b.WriteString(m.renderHeader())
 	b.WriteString("\n")
 
-	b.WriteString(m.renderBoard())
+	sidebar := m.renderSidebar()
+	board := m.renderBoard()
+	if sidebar != "" {
+		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, sidebar, board))
+	} else {
+		b.WriteString(board)
+	}
 
 	if m.showHelp {
 		return m.renderWithOverlay(m.renderHelp())
@@ -185,7 +191,7 @@ func (m *Model) renderBoard() string {
 
 	for i := startCol; i < endCol; i++ {
 		col := m.columns[i]
-		isActive := i == m.activeColumn
+		isActive := i == m.activeColumn && !m.sidebarFocused
 		isLast := i == endCol-1
 		isDragTarget := m.dragging && i == m.dragTargetColumn && i != m.dragSourceColumn
 
@@ -339,14 +345,12 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected bool, width int, c
 	var projectBadge string
 	if proj := m.globalStore.GetProjectForTicket(ticket); proj != nil {
 		shortName := proj.Name
-		if len(shortName) > 15 {
-			shortName = shortName[:13] + ".."
+		if len(shortName) > 12 {
+			shortName = shortName[:10] + ".."
 		}
-		projectBadge = lipgloss.NewStyle().
-			Foreground(colorBase).
-			Background(colorTeal).
-			Padding(0, 1).
-			Render(shortName)
+		bracketStyle := lipgloss.NewStyle().Foreground(colorTeal)
+		textStyle := lipgloss.NewStyle().Foreground(colorTeal).Bold(true)
+		projectBadge = bracketStyle.Render("❨") + textStyle.Render(shortName) + bracketStyle.Render("❩")
 	}
 
 	var sessionBadge string
@@ -604,12 +608,17 @@ func (m *Model) renderHelp() string {
 		"  " + keyStyle.Render("G") + descStyle.Render("     Go to last ticket     ") + keyStyle.Render("Space") + descStyle.Render("   Move forward") + "\n" +
 		"  " + keyStyle.Render(" ") + descStyle.Render("                            ") + keyStyle.Render("-") + descStyle.Render("       Move backward") + "\n\n" +
 		sep + "\n" +
-		sectionStyle.Render("  🤖 Agent") + "                      " + sectionStyle.Render("👁 View") + "\n" +
+		sectionStyle.Render("  📂 Sidebar") + "                    " + sectionStyle.Render("🤖 Agent") + "\n" +
 		sep + "\n" +
-		"  " + keyStyle.Render("s") + descStyle.Render("     Spawn agent           ") + keyStyle.Render("/") + descStyle.Render("       Search/filter tickets") + "\n" +
-		"  " + keyStyle.Render("S") + descStyle.Render("     Stop agent            ") + keyStyle.Render("O") + descStyle.Render("       Settings") + "\n" +
-		"  " + keyStyle.Render("Enter") + descStyle.Render(" Attach to agent       ") + keyStyle.Render("?") + descStyle.Render("       Toggle help") + "\n" +
-		"  " + keyStyle.Render("Ctrl+g") + descStyle.Render(" Exit agent view      ") + keyStyle.Render("q") + descStyle.Render("       Quit") + "\n\n" +
+		"  " + keyStyle.Render("[") + descStyle.Render("     Toggle sidebar        ") + keyStyle.Render("s") + descStyle.Render("       Spawn agent") + "\n" +
+		"  " + keyStyle.Render("h") + descStyle.Render("     Enter sidebar         ") + keyStyle.Render("S") + descStyle.Render("       Stop agent") + "\n" +
+		"  " + keyStyle.Render("l") + descStyle.Render("     Exit sidebar          ") + keyStyle.Render("Enter") + descStyle.Render("   Attach to agent") + "\n" +
+		"  " + keyStyle.Render("j/k") + descStyle.Render("   Navigate projects     ") + keyStyle.Render("Ctrl+g") + descStyle.Render("  Exit agent view") + "\n\n" +
+		sep + "\n" +
+		sectionStyle.Render("  👁 View") + "\n" +
+		sep + "\n" +
+		"  " + keyStyle.Render("/") + descStyle.Render("     Search/filter         ") + keyStyle.Render("O") + descStyle.Render("       Settings") + "\n" +
+		"  " + keyStyle.Render("?") + descStyle.Render("     Toggle help           ") + keyStyle.Render("q") + descStyle.Render("       Quit") + "\n\n" +
 		sep + "\n" +
 		"  " + lipgloss.NewStyle().Foreground(colorYellow).Render("💡") + dimStyle.Render(" Tip: Hold Shift to select text in agent view") + "\n\n" +
 		"  " + dimStyle.Render("Press any key to close")
@@ -1067,6 +1076,122 @@ func shortenPath(path string) string {
 		return "~" + path[len(home):]
 	}
 	return path
+}
+
+func (m *Model) renderSidebar() string {
+	if !m.sidebarVisible {
+		return ""
+	}
+
+	projects := m.globalStore.Projects()
+	headerHeight := 5
+	statusHeight := 1
+	availableHeight := m.height - headerHeight - statusHeight
+
+	titleStyle := lipgloss.NewStyle().
+		Foreground(colorBlue).
+		Bold(true)
+
+	selectedStyle := lipgloss.NewStyle().
+		Foreground(colorBase).
+		Background(colorBlue).
+		Bold(true).
+		Padding(0, 1)
+
+	normalStyle := lipgloss.NewStyle().
+		Foreground(colorText).
+		Padding(0, 1)
+
+	mutedStyle := lipgloss.NewStyle().
+		Foreground(colorMuted).
+		Padding(0, 1)
+
+	var lines []string
+
+	lines = append(lines, titleStyle.Render("  Projects"))
+	lines = append(lines, "")
+
+	allCount := m.globalStore.Count()
+	allLabel := fmt.Sprintf("All (%d)", allCount)
+	if m.sidebarIndex == 0 {
+		if m.sidebarFocused {
+			lines = append(lines, selectedStyle.Render("● "+allLabel))
+		} else {
+			lines = append(lines, normalStyle.Render("● "+allLabel))
+		}
+	} else {
+		if m.filterProjectID == "" {
+			lines = append(lines, normalStyle.Render("● "+allLabel))
+		} else {
+			lines = append(lines, mutedStyle.Render("  "+allLabel))
+		}
+	}
+
+	lines = append(lines, "")
+
+	for i, p := range projects {
+		idx := i + 1
+		count := 0
+		for _, t := range m.globalStore.All() {
+			if t.ProjectID == p.ID {
+				count++
+			}
+		}
+		label := fmt.Sprintf("%s (%d)", p.Name, count)
+
+		isFiltered := m.filterProjectID == p.ID
+
+		if m.sidebarIndex == idx && m.sidebarFocused {
+			lines = append(lines, selectedStyle.Render("● "+label))
+		} else if isFiltered {
+			lines = append(lines, normalStyle.Render("● "+label))
+		} else {
+			lines = append(lines, mutedStyle.Render("  "+label))
+		}
+	}
+
+	lines = append(lines, "")
+	addIndex := len(projects) + 1
+	if m.sidebarIndex == addIndex && m.sidebarFocused {
+		lines = append(lines, selectedStyle.Render("+ Add project"))
+	} else {
+		addStyle := lipgloss.NewStyle().Foreground(colorGreen).Padding(0, 1)
+		lines = append(lines, addStyle.Render("+ Add project"))
+	}
+
+	for len(lines) < availableHeight-2 {
+		lines = append(lines, "")
+	}
+
+	hintStyle := lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
+	if m.sidebarFocused {
+		lines = append(lines, hintStyle.Render("  j/k ⏎select l→exit"))
+	} else {
+		lines = append(lines, hintStyle.Render("  h→focus  [hide"))
+	}
+
+	content := strings.Join(lines, "\n")
+
+	style := lipgloss.NewStyle().
+		Width(m.sidebarWidth).
+		Height(availableHeight).
+		BorderRight(true).
+		BorderStyle(lipgloss.NormalBorder())
+
+	if m.sidebarFocused {
+		style = style.BorderForeground(colorBlue)
+	} else {
+		style = style.BorderForeground(colorSurface)
+	}
+
+	return style.Render(content)
+}
+
+func (m *Model) boardWidth() int {
+	if m.sidebarVisible {
+		return m.width - m.sidebarWidth - 1
+	}
+	return m.width
 }
 
 var (
