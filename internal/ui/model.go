@@ -237,6 +237,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					now := time.Now()
 					ticket.AgentSpawnedAt = &now
 				}
+				if msg.worktreePath != "" && ticket.WorktreePath == "" {
+					ticket.WorktreePath = msg.worktreePath
+					ticket.BranchName = msg.branchName
+					ticket.BaseBranch = msg.baseBranch
+				}
 				m.saveTicket(ticket)
 			}
 
@@ -1896,18 +1901,24 @@ func (m *Model) prepareSpawn(ticket *board.Ticket, proj *project.Project, agentC
 				}
 			}
 			return spawnReadyMsg{
-				ticketID: ticketID,
-				pane:     pane,
-				command:  command,
-				args:     args,
+				ticketID:     ticketID,
+				pane:         pane,
+				command:      command,
+				args:         args,
+				worktreePath: worktreePath,
+				branchName:   branchName,
+				baseBranch:   baseBranch,
 			}
 		}
 
 		return spawnReadyMsg{
-			ticketID: ticketID,
-			pane:     pane,
-			command:  agentCfg.Command,
-			args:     args,
+			ticketID:     ticketID,
+			pane:         pane,
+			command:      agentCfg.Command,
+			args:         args,
+			worktreePath: worktreePath,
+			branchName:   branchName,
+			baseBranch:   baseBranch,
 		}
 	}
 }
@@ -2081,10 +2092,14 @@ func (m *Model) pollAgentStatusesAsync() tea.Cmd {
 		if ticket == nil {
 			continue
 		}
+		worktreePath := pane.GetWorkdir()
+		if worktreePath == "" {
+			worktreePath = ticket.WorktreePath
+		}
 		panes = append(panes, paneInfo{
 			ticketID:        ticketID,
 			agentType:       ticket.AgentType,
-			worktreePath:    ticket.WorktreePath,
+			worktreePath:    worktreePath,
 			branchName:      ticket.BranchName,
 			running:         pane.Running(),
 			terminalContent: pane.GetContent(),
@@ -2133,10 +2148,13 @@ type notificationMsg time.Time
 type shutdownCompleteMsg struct{}
 
 type spawnReadyMsg struct {
-	ticketID board.TicketID
-	pane     *terminal.Pane
-	command  string
-	args     []string
+	ticketID     board.TicketID
+	pane         *terminal.Pane
+	command      string
+	args         []string
+	worktreePath string
+	branchName   string
+	baseBranch   string
 }
 
 type spawnErrorMsg struct {

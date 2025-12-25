@@ -54,6 +54,10 @@ func (p *Pane) SetWorkdir(dir string) {
 	p.workdir = dir
 }
 
+func (p *Pane) GetWorkdir() string {
+	return p.workdir
+}
+
 // Running returns whether the pane has a running process
 func (p *Pane) Running() bool {
 	p.mu.Lock()

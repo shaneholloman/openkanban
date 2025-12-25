@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -70,10 +69,8 @@ func (d *StatusDetector) DetectStatusWithPath(agentType, sessionID, worktreePath
 	}
 
 	if agentType == "opencode" {
-		if worktreePath != "" {
-			if status := d.queryOpencodeStatusByDirectory(worktreePath); status != board.AgentNone {
-				return status
-			}
+		if status := d.queryOpencodeStatusByDirectory(worktreePath); status != board.AgentNone {
+			return status
 		}
 		if sessionID != "" {
 			if status := d.queryOpencodeAPI(sessionID); status != board.AgentNone {
@@ -245,8 +242,11 @@ func (d *StatusDetector) mapOpencodeStatus(s opencodeSessionStatus) board.AgentS
 	}
 }
 
-func (d *StatusDetector) queryOpencodeStatusByDirectory(directory string) board.AgentStatus {
-	cacheKey := "opencode-dir:" + directory
+// queryOpencodeStatusByDirectory queries the OpenCode API for session status.
+// Since OpenKanban runs one opencode server per project, we simply check if
+// ANY session is busy/working. This avoids the slow `opencode session list` call.
+func (d *StatusDetector) queryOpencodeStatusByDirectory(_ string) board.AgentStatus {
+	cacheKey := "opencode-api"
 
 	d.statusCacheMu.RLock()
 	cached, exists := d.statusCache[cacheKey]
@@ -254,11 +254,6 @@ func (d *StatusDetector) queryOpencodeStatusByDirectory(directory string) board.
 
 	if exists && time.Since(cached.timestamp) < d.cacheExpiration {
 		return cached.status
-	}
-
-	sessions := d.getOpencodeSessionsForDirectory(directory)
-	if len(sessions) == 0 {
-		return board.AgentNone
 	}
 
 	statusURL := fmt.Sprintf("http://localhost:%d/session/status", opencodeDefaultPort)
@@ -278,19 +273,17 @@ func (d *StatusDetector) queryOpencodeStatusByDirectory(directory string) board.
 	}
 
 	var status board.AgentStatus = board.AgentNone
-	for _, sessionID := range sessions {
-		if sessionStatus, found := statusResp[sessionID]; found {
-			mappedStatus := d.mapOpencodeStatus(sessionStatus)
-			if mappedStatus == board.AgentWorking {
-				status = board.AgentWorking
-				break
-			}
-			if mappedStatus == board.AgentError && status != board.AgentWorking {
-				status = board.AgentError
-			}
-			if mappedStatus == board.AgentIdle && status == board.AgentNone {
-				status = board.AgentIdle
-			}
+	for _, sessionStatus := range statusResp {
+		mappedStatus := d.mapOpencodeStatus(sessionStatus)
+		if mappedStatus == board.AgentWorking {
+			status = board.AgentWorking
+			break
+		}
+		if mappedStatus == board.AgentError && status != board.AgentWorking {
+			status = board.AgentError
+		}
+		if mappedStatus == board.AgentIdle && status == board.AgentNone {
+			status = board.AgentIdle
 		}
 	}
 
@@ -304,28 +297,6 @@ func (d *StatusDetector) queryOpencodeStatusByDirectory(directory string) board.
 	}
 
 	return status
-}
-
-func (d *StatusDetector) getOpencodeSessionsForDirectory(directory string) []string {
-	cmd := exec.Command("opencode", "session", "list", "--format", "json")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil
-	}
-
-	var sessions []opencodeSession
-	if err := json.Unmarshal(output, &sessions); err != nil {
-		return nil
-	}
-
-	var matching []string
-	for _, s := range sessions {
-		if s.Directory == directory {
-			matching = append(matching, s.ID)
-		}
-	}
-
-	return matching
 }
 
 func (d *StatusDetector) readStatusFile(sessionName string) board.AgentStatus {
