@@ -263,10 +263,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case terminal.ExitMsg:
 			if board.TicketID(msg.PaneID) == m.spawningTicketID {
-				m.mode = ModeNormal
-				m.spawningTicketID = ""
-				m.spawningAgent = ""
-				delete(m.panes, m.spawningTicketID)
+				m.resetSpawnState(board.TicketID(msg.PaneID))
 				m.notify("Agent failed to start")
 			}
 			return m, nil
@@ -2036,6 +2033,18 @@ func (m *Model) saveTicket(ticket *board.Ticket) {
 	}
 }
 
+func (m *Model) resetSpawnState(ticketID board.TicketID) {
+	if ticket, _ := m.globalStore.Get(ticketID); ticket != nil {
+		ticket.AgentSpawnedAt = nil
+		ticket.AgentStatus = board.AgentNone
+		m.saveTicket(ticket)
+	}
+	m.mode = ModeNormal
+	m.spawningTicketID = ""
+	m.spawningAgent = ""
+	delete(m.panes, ticketID)
+}
+
 func (m *Model) RunningAgentCount() int {
 	count := 0
 	for _, pane := range m.panes {
@@ -2102,7 +2111,7 @@ func (m *Model) pollAgentStatusesAsync() tea.Cmd {
 				}
 			}
 
-			results[p.ticketID] = detector.DetectStatus(p.agentType, sessionID, true, p.terminalContent)
+			results[p.ticketID] = detector.DetectStatusWithPath(p.agentType, sessionID, p.worktreePath, true, p.terminalContent)
 		}
 		return results
 	}

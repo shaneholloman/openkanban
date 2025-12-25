@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -56,6 +57,10 @@ func NewStatusDetector() *StatusDetector {
 }
 
 func (d *StatusDetector) DetectStatus(agentType, sessionID string, processRunning bool, terminalContent string) board.AgentStatus {
+	return d.DetectStatusWithPath(agentType, sessionID, "", processRunning, terminalContent)
+}
+
+func (d *StatusDetector) DetectStatusWithPath(agentType, sessionID, worktreePath string, processRunning bool, terminalContent string) board.AgentStatus {
 	if !processRunning {
 		return board.AgentNone
 	}
@@ -64,9 +69,16 @@ func (d *StatusDetector) DetectStatus(agentType, sessionID string, processRunnin
 		return status
 	}
 
-	if agentType == "opencode" && sessionID != "" {
-		if status := d.queryOpencodeAPI(sessionID); status != board.AgentNone {
-			return status
+	if agentType == "opencode" {
+		if worktreePath != "" {
+			if status := d.queryOpencodeStatusByDirectory(worktreePath); status != board.AgentNone {
+				return status
+			}
+		}
+		if sessionID != "" {
+			if status := d.queryOpencodeAPI(sessionID); status != board.AgentNone {
+				return status
+			}
 		}
 	}
 
@@ -231,6 +243,89 @@ func (d *StatusDetector) mapOpencodeStatus(s opencodeSessionStatus) board.AgentS
 	default:
 		return board.AgentNone
 	}
+}
+
+func (d *StatusDetector) queryOpencodeStatusByDirectory(directory string) board.AgentStatus {
+	cacheKey := "opencode-dir:" + directory
+
+	d.statusCacheMu.RLock()
+	cached, exists := d.statusCache[cacheKey]
+	d.statusCacheMu.RUnlock()
+
+	if exists && time.Since(cached.timestamp) < d.cacheExpiration {
+		return cached.status
+	}
+
+	sessions := d.getOpencodeSessionsForDirectory(directory)
+	if len(sessions) == 0 {
+		return board.AgentNone
+	}
+
+	statusURL := fmt.Sprintf("http://localhost:%d/session/status", opencodeDefaultPort)
+	resp, err := d.httpClient.Get(statusURL)
+	if err != nil {
+		return board.AgentNone
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return board.AgentNone
+	}
+
+	var statusResp opencodeStatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&statusResp); err != nil {
+		return board.AgentNone
+	}
+
+	var status board.AgentStatus = board.AgentNone
+	for _, sessionID := range sessions {
+		if sessionStatus, found := statusResp[sessionID]; found {
+			mappedStatus := d.mapOpencodeStatus(sessionStatus)
+			if mappedStatus == board.AgentWorking {
+				status = board.AgentWorking
+				break
+			}
+			if mappedStatus == board.AgentError && status != board.AgentWorking {
+				status = board.AgentError
+			}
+			if mappedStatus == board.AgentIdle && status == board.AgentNone {
+				status = board.AgentIdle
+			}
+		}
+	}
+
+	if status != board.AgentNone {
+		d.statusCacheMu.Lock()
+		d.statusCache[cacheKey] = cachedStatus{
+			status:    status,
+			timestamp: time.Now(),
+		}
+		d.statusCacheMu.Unlock()
+	}
+
+	return status
+}
+
+func (d *StatusDetector) getOpencodeSessionsForDirectory(directory string) []string {
+	cmd := exec.Command("opencode", "session", "list", "--format", "json")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+
+	var sessions []opencodeSession
+	if err := json.Unmarshal(output, &sessions); err != nil {
+		return nil
+	}
+
+	var matching []string
+	for _, s := range sessions {
+		if s.Directory == directory {
+			matching = append(matching, s.ID)
+		}
+	}
+
+	return matching
 }
 
 func (d *StatusDetector) readStatusFile(sessionName string) board.AgentStatus {
