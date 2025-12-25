@@ -95,6 +95,7 @@ type Config struct {
 type OpencodeSettings struct {
 	ServerEnabled bool `json:"server_enabled"` // Start opencode server for enhanced status detection
 	ServerPort    int  `json:"server_port"`    // Port for opencode server (default: 4096)
+	PollInterval  int  `json:"poll_interval"`  // Status polling interval in seconds (default: 1)
 }
 
 // BoardSettings contains default settings for boards
@@ -197,6 +198,7 @@ func DefaultConfig() *Config {
 		Opencode: OpencodeSettings{
 			ServerEnabled: true,
 			ServerPort:    4096,
+			PollInterval:  1,
 		},
 	}
 }

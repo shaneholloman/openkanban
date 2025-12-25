@@ -70,11 +70,10 @@ func (m *Manager) PollStatuses(tickets map[board.TicketID]*board.Ticket) {
 	// This method is kept for interface compatibility but does nothing.
 }
 
-// StatusPollInterval returns the configured polling interval
 func (m *Manager) StatusPollInterval() time.Duration {
-	interval := m.config.UI.RefreshInterval
+	interval := m.config.Opencode.PollInterval
 	if interval <= 0 {
-		interval = 5
+		interval = 1
 	}
 	return time.Duration(interval) * time.Second
 }

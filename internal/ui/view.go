@@ -355,10 +355,6 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected bool, width int, c
 
 	var sessionBadge string
 	switch effectiveStatus {
-	case board.AgentWorking:
-		sessionBadge = lipgloss.NewStyle().
-			Foreground(colorYellow).
-			Render(m.spinner.View())
 	case board.AgentWaiting:
 		sessionBadge = lipgloss.NewStyle().
 			Foreground(colorMauve).
