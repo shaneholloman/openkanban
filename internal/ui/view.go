@@ -293,13 +293,13 @@ func (m *Model) renderColumn(col board.Column, tickets []*board.Ticket, isActive
 	ticketsView := strings.Join(ticketViews, "\n")
 	if len(tickets) == 0 {
 		emptyIcon := "○"
-		emptyText := "Drop tickets here"
+		emptyText := "Drag or Space to move here"
 		if col.Status == board.StatusBacklog {
 			emptyIcon = "+"
-			emptyText = "Press 'n' to create"
+			emptyText = "Press n to add a ticket"
 		} else if col.Status == board.StatusDone {
 			emptyIcon = "✓"
-			emptyText = "Completed work appears here"
+			emptyText = "Finished tickets land here"
 		}
 		emptyStyle := lipgloss.NewStyle().
 			Foreground(colorMuted).
@@ -534,6 +534,7 @@ func (m *Model) renderStatusBar() string {
 		ModeSettings:     {"⚙", colorMauve},
 		ModeHelp:         {"?", colorBlue},
 		ModeConfirm:      {"!", colorRed},
+		ModeFilter:       {"/", colorTeal},
 	}
 	cfg := modeConfigs[m.mode]
 	if cfg.bg == "" {
@@ -547,13 +548,9 @@ func (m *Model) renderStatusBar() string {
 		Render(cfg.icon + " " + string(m.mode))
 
 	sep := lipgloss.NewStyle().Foreground(colorOverlay).Render(" │ ")
-
 	hintStyle := lipgloss.NewStyle().Foreground(colorSubtext)
-	hints := hintStyle.Render("h/l") + dimStyle.Render(": move") + sep +
-		hintStyle.Render("n") + dimStyle.Render(": new") + sep +
-		hintStyle.Render("e") + dimStyle.Render(": edit") + sep +
-		hintStyle.Render("s") + dimStyle.Render(": spawn") + sep +
-		hintStyle.Render("/") + dimStyle.Render(": search")
+
+	hints := m.contextualHints(hintStyle, sep)
 
 	notif := ""
 	if m.notification != "" {
@@ -579,6 +576,72 @@ func (m *Model) renderStatusBar() string {
 	spacing = max(spacing, 0)
 
 	return lipgloss.JoinHorizontal(lipgloss.Center, left, strings.Repeat(" ", spacing), notif)
+}
+
+func (m *Model) contextualHints(hintStyle lipgloss.Style, sep string) string {
+	switch m.mode {
+	case ModeFilter:
+		return hintStyle.Render("Enter") + dimStyle.Render(" apply") + sep +
+			hintStyle.Render("Esc") + dimStyle.Render(" cancel") + sep +
+			dimStyle.Render("@project to filter by project")
+
+	case ModeSettings:
+		return hintStyle.Render("j/k") + dimStyle.Render(" navigate") + sep +
+			hintStyle.Render("Enter") + dimStyle.Render(" select") + sep +
+			hintStyle.Render("Esc") + dimStyle.Render(" close")
+
+	case ModeCreateTicket, ModeEditTicket:
+		action := "create"
+		if m.mode == ModeEditTicket {
+			action = "save"
+		}
+		return hintStyle.Render("Tab") + dimStyle.Render(" next field") + sep +
+			hintStyle.Render("Ctrl+S") + dimStyle.Render(" "+action) + sep +
+			hintStyle.Render("Esc") + dimStyle.Render(" cancel")
+
+	case ModeAgentView:
+		return hintStyle.Render("Ctrl+G") + dimStyle.Render(" back to board") + sep +
+			dimStyle.Render("Shift+click to select text")
+
+	case ModeNormal:
+		if m.sidebarFocused {
+			return hintStyle.Render("j/k") + dimStyle.Render(" navigate") + sep +
+				hintStyle.Render("Enter") + dimStyle.Render(" select project") + sep +
+				hintStyle.Render("l") + dimStyle.Render(" back to board")
+		}
+
+		if m.filterQuery != "" || m.filterProjectID != "" {
+			return hintStyle.Render("Esc") + dimStyle.Render(" clear filter") + sep +
+				hintStyle.Render("/") + dimStyle.Render(" edit filter") + sep +
+				hintStyle.Render("?") + dimStyle.Render(" help")
+		}
+
+		ticket := m.selectedTicket()
+		if ticket != nil {
+			if _, hasPane := m.panes[ticket.ID]; hasPane {
+				return hintStyle.Render("Enter") + dimStyle.Render(" attach") + sep +
+					hintStyle.Render("S") + dimStyle.Render(" stop agent") + sep +
+					hintStyle.Render("Space") + dimStyle.Render(" move") + sep +
+					hintStyle.Render("?") + dimStyle.Render(" help")
+			}
+			if ticket.Status == board.StatusInProgress {
+				return hintStyle.Render("s") + dimStyle.Render(" spawn agent") + sep +
+					hintStyle.Render("Space") + dimStyle.Render(" move") + sep +
+					hintStyle.Render("e") + dimStyle.Render(" edit") + sep +
+					hintStyle.Render("?") + dimStyle.Render(" help")
+			}
+		}
+
+		return hintStyle.Render("h/l") + dimStyle.Render(" columns") + sep +
+			hintStyle.Render("n") + dimStyle.Render(" new") + sep +
+			hintStyle.Render("Space") + dimStyle.Render(" move") + sep +
+			hintStyle.Render("/") + dimStyle.Render(" search") + sep +
+			hintStyle.Render("?") + dimStyle.Render(" help")
+
+	default:
+		return hintStyle.Render("Esc") + dimStyle.Render(" back") + sep +
+			hintStyle.Render("?") + dimStyle.Render(" help")
+	}
 }
 
 func (m *Model) renderHelp() string {
@@ -722,6 +785,7 @@ func (m *Model) renderTicketForm() string {
 	labelStyle := lipgloss.NewStyle().Foreground(colorSubtext)
 	activeLabelStyle := lipgloss.NewStyle().Foreground(colorTeal).Bold(true)
 	lockedStyle := lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
+	descriptionStyle := lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
 
 	titleLabel := labelStyle
 	descLabel := labelStyle
@@ -740,11 +804,14 @@ func (m *Model) renderTicketForm() string {
 	}
 
 	var branchField string
+	var branchDesc string
 	if m.branchLocked {
 		branchLabel = lockedStyle
 		branchField = lockedStyle.Render(m.branchInput.Value() + " (locked)")
+		branchDesc = descriptionStyle.Render("Branch is locked after worktree creation")
 	} else {
 		branchField = m.branchInput.View()
+		branchDesc = descriptionStyle.Render("Auto-generated from title if left empty")
 	}
 
 	projectField := m.renderProjectSelector()
@@ -775,18 +842,22 @@ func (m *Model) renderTicketForm() string {
 
 	content := titleStyle.Render("◈ "+formTitle) + "\n\n" +
 		titleFocus + titleLabel.Render("Title") + "  " + titleCharStyle.Render(titleCharCount) + "\n" +
+		"  " + descriptionStyle.Render("Brief summary of the task") + "\n" +
 		"  " + m.titleInput.View() + "\n\n" +
 		descFocus + descLabel.Render("Description") + "\n" +
+		"  " + descriptionStyle.Render("Details, context, or acceptance criteria") + "\n" +
 		"  " + m.descInput.View() + "\n\n" +
 		branchFocus + branchLabel.Render("Branch") + "\n" +
+		"  " + branchDesc + "\n" +
 		"  " + branchField + "\n"
 
 	if !isEdit {
 		content += "\n" + projectFocus + projectLabel.Render("Project") + "\n" +
+			"  " + descriptionStyle.Render("Repository where this ticket belongs") + "\n" +
 			"  " + projectField + "\n"
 	}
 
-	content += "\n  " + lipgloss.NewStyle().Foreground(colorTeal).Render("[Tab]") + dimStyle.Render(" Switch    ") +
+	content += "\n  " + lipgloss.NewStyle().Foreground(colorTeal).Render("[Tab]") + dimStyle.Render(" Next field    ") +
 		lipgloss.NewStyle().Foreground(colorGreen).Render("[Ctrl+S]") + dimStyle.Render(" "+actionText+"    ") +
 		lipgloss.NewStyle().Foreground(colorMuted).Render("[Esc]") + dimStyle.Render(" Cancel")
 
@@ -820,26 +891,21 @@ func (m *Model) renderSettingsView() string {
 	valueStyle := lipgloss.NewStyle().
 		Foreground(colorText)
 
+	descStyle := lipgloss.NewStyle().
+		Foreground(colorMuted).
+		Italic(true)
+
 	selectedLabelStyle := lipgloss.NewStyle().
 		Foreground(colorMauve).
 		Bold(true)
 
 	var lines []string
-	lines = append(lines, titleStyle.Render("◈ Global Settings"))
+	lines = append(lines, titleStyle.Render("◈ Settings"))
 	lines = append(lines, "")
 
 	for i, field := range settingsFields {
 		label := field.label
-		value := ""
-
-		switch field.key {
-		case "filter_project":
-			if m.filterProjectID == "" {
-				value = "All Projects"
-			} else if p := m.globalStore.GetProject(m.filterProjectID); p != nil {
-				value = p.Name
-			}
-		}
+		value := m.getSettingsValue(field.key)
 
 		cursor := "  "
 		lStyle := labelStyle
@@ -853,16 +919,31 @@ func (m *Model) renderSettingsView() string {
 
 		line := cursor + lStyle.Render(fmt.Sprintf("%-18s", label)) + " " + vStyle.Render(value)
 		lines = append(lines, line)
+		lines = append(lines, "    "+descStyle.Render(field.description))
+		lines = append(lines, "")
 	}
 
+	lines = append(lines, dimStyle.Render("  Config file: ~/.config/openkanban/config.json"))
 	lines = append(lines, "")
-	lines = append(lines, "  "+lipgloss.NewStyle().Foreground(colorTeal).Render("[Enter]")+dimStyle.Render(" Open search  ")+
+
+	field := settingsFields[m.settingsIndex]
+	var actionHint string
+	switch field.kind {
+	case "toggle":
+		actionHint = "Toggle"
+	case "project":
+		actionHint = "Select"
+	default:
+		actionHint = "Edit"
+	}
+
+	lines = append(lines, "  "+lipgloss.NewStyle().Foreground(colorTeal).Render("[Enter]")+dimStyle.Render(" "+actionHint+"  ")+
 		lipgloss.NewStyle().Foreground(colorMuted).Render("[Esc]")+dimStyle.Render(" Close"))
 
 	content := strings.Join(lines, "\n")
 
 	return lipgloss.NewStyle().
-		Border(columnBorder).
+		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colorMauve).
 		Padding(1, 2).
 		Render(content)
@@ -1019,14 +1100,14 @@ func (m *Model) countVisibleTickets() int {
 func (m *Model) renderProjectSelector() string {
 	projects := m.globalStore.Projects()
 	if len(projects) == 0 {
-		return dimStyle.Render("No projects available")
+		return dimStyle.Render("No projects yet — press Enter to add one")
 	}
 
 	if m.ticketFormField != formFieldProject {
 		if m.selectedProject != nil {
 			return lipgloss.NewStyle().Foreground(colorTeal).Render(m.selectedProject.Name)
 		}
-		return dimStyle.Render("Select project...")
+		return dimStyle.Render("Tab to select project")
 	}
 
 	if m.showAddProjectForm {
@@ -1061,17 +1142,19 @@ func (m *Model) renderProjectSelector() string {
 	}
 	lines = append(lines, addOption)
 	lines = append(lines, "")
-	lines = append(lines, dimStyle.Render("j/k navigate  Enter select  d delete"))
+	lines = append(lines, dimStyle.Render("↑↓ navigate  ⏎ select  d delete"))
 
 	return strings.Join(lines, "\n  ")
 }
 
 func (m *Model) renderAddProjectForm() string {
 	titleStyle := lipgloss.NewStyle().Foreground(colorGreen).Bold(true)
+	descStyle := lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
 	return titleStyle.Render("Add Project") + "\n\n" +
 		"  " + lipgloss.NewStyle().Foreground(colorSubtext).Render("Repository path:") + "\n" +
+		"  " + descStyle.Render("Path to a git repository (e.g. ~/projects/myapp)") + "\n" +
 		"  " + m.addProjectPath.View() + "\n\n" +
-		"  " + dimStyle.Render("[Enter] Add  [Esc] Cancel")
+		"  " + dimStyle.Render("⏎ Add  Esc Cancel")
 }
 
 func shortenPath(path string) string {

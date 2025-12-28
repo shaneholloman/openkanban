@@ -294,7 +294,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = ModeNormal
 				m.spawningTicketID = ""
 				m.spawningAgent = ""
-				m.notify("Cancelled")
+				m.notify("Spawn cancelled")
 				return m, nil
 			}
 		}
@@ -1266,13 +1266,15 @@ func (m *Model) saveTicketForm(isEdit bool) (tea.Model, tea.Cmd) {
 }
 
 type settingsField struct {
-	key   string
-	label string
-	kind  string
+	key         string
+	label       string
+	kind        string
+	description string
 }
 
 var settingsFields = []settingsField{
-	{"filter_project", "Filter Project", "project"},
+	{"filter_project", "Filter Project", "project", "Show only tickets from a specific project"},
+	{"sidebar_visible", "Show Sidebar", "toggle", "Toggle the project sidebar visibility"},
 }
 
 func (m *Model) handleSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1370,17 +1372,25 @@ func (m *Model) handleConfirmMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 func (m *Model) enterSettingsEdit() (tea.Model, tea.Cmd) {
 	field := settingsFields[m.settingsIndex]
 
-	if field.kind == "project" {
+	switch field.kind {
+	case "project":
 		m.filterInput.SetValue(m.filterQuery)
 		m.filterInput.Focus()
 		m.mode = ModeFilter
 		return m, textinput.Blink
-	}
 
-	m.settingsEditing = true
-	m.settingsInput.SetValue(m.getSettingsValue(field.key))
-	m.settingsInput.Focus()
-	return m, textinput.Blink
+	case "toggle":
+		m.applySettingsValue(field.key, "")
+		status := m.getSettingsValue(field.key)
+		m.notify(field.label + ": " + status)
+		return m, nil
+
+	default:
+		m.settingsEditing = true
+		m.settingsInput.SetValue(m.getSettingsValue(field.key))
+		m.settingsInput.Focus()
+		return m, textinput.Blink
+	}
 }
 
 func (m *Model) getSettingsValue(key string) string {
@@ -1392,11 +1402,23 @@ func (m *Model) getSettingsValue(key string) string {
 		if p := m.globalStore.GetProject(m.filterProjectID); p != nil {
 			return p.Name
 		}
+	case "sidebar_visible":
+		if m.sidebarVisible {
+			return "On"
+		}
+		return "Off"
 	}
 	return ""
 }
 
 func (m *Model) applySettingsValue(key, value string) {
+	switch key {
+	case "sidebar_visible":
+		m.sidebarVisible = !m.sidebarVisible
+		if !m.sidebarVisible {
+			m.sidebarFocused = false
+		}
+	}
 }
 
 func (m *Model) handleFilterMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1615,7 +1637,7 @@ func (m *Model) attachToAgent() (tea.Model, tea.Cmd) {
 
 	pane, ok := m.panes[ticket.ID]
 	if !ok || !pane.Running() {
-		m.notify("No active agent for this ticket")
+		m.notify("No agent running — press 's' to spawn")
 		return m, nil
 	}
 
@@ -1663,6 +1685,8 @@ func (m *Model) confirmDeleteTicket() (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) performTicketCleanup(ticket *board.Ticket) {
+	ticketTitle := ticket.Title // Capture before deletion
+
 	if pane, ok := m.panes[ticket.ID]; ok {
 		pane.Stop()
 		delete(m.panes, ticket.ID)
@@ -1675,14 +1699,14 @@ func (m *Model) performTicketCleanup(ticket *board.Ticket) {
 			if ticket.WorktreePath != "" && m.config.Cleanup.DeleteWorktree {
 				err := mgr.RemoveWorktree(ticket.WorktreePath)
 				if err != nil {
-					m.notify("Worktree removal failed: " + err.Error())
+					m.notify("Failed to remove worktree: " + err.Error())
 				}
 			}
 
 			if ticket.BranchName != "" && m.config.Cleanup.DeleteBranch {
 				err := mgr.DeleteBranch(ticket.BranchName)
 				if err != nil {
-					m.notify("Branch deletion failed: " + err.Error())
+					m.notify("Failed to delete branch: " + err.Error())
 				}
 			}
 		}
@@ -1691,7 +1715,7 @@ func (m *Model) performTicketCleanup(ticket *board.Ticket) {
 	m.globalStore.Delete(ticket.ID)
 	m.refreshColumnTickets()
 	m.globalStore.SaveAll()
-	m.notify("Deleted ticket")
+	m.notify("Deleted: " + ticketTitle)
 }
 
 func (m *Model) quickMoveTicket() (tea.Model, tea.Cmd) {
@@ -1808,18 +1832,18 @@ func (m *Model) spawnAgent() (tea.Model, tea.Cmd) {
 	}
 
 	if ticket.Status != board.StatusInProgress {
-		m.notify("Move ticket to In Progress first")
+		m.notify("Press Space to move to In Progress first")
 		return m, nil
 	}
 
 	if _, exists := m.panes[ticket.ID]; exists {
-		m.notify("Agent already running")
+		m.notify("Agent already running — press Enter to attach")
 		return m, nil
 	}
 
 	proj := m.globalStore.GetProjectForTicket(ticket)
 	if proj == nil {
-		m.notify("Project not found")
+		m.notify("Project not found for this ticket")
 		return m, nil
 	}
 
@@ -1829,7 +1853,7 @@ func (m *Model) spawnAgent() (tea.Model, tea.Cmd) {
 	}
 	agentCfg, ok := m.config.Agents[agentType]
 	if !ok {
-		m.notify("Unknown agent: " + agentType)
+		m.notify("Agent '" + agentType + "' not configured")
 		return m, nil
 	}
 
