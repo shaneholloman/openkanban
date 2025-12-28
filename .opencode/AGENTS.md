@@ -1,61 +1,54 @@
 # AGENTS.md - OpenKanban
 
-TUI kanban board for orchestrating AI coding agents. Built with Go 1.23+, Bubbletea, and Lipgloss.
+TUI kanban board for orchestrating AI coding agents. Go 1.25+, Bubbletea, Lipgloss.
 
 ## Commands
 
-| Task | Command |
-|------|---------|
-| Build | `go build ./...` |
-| All tests | `go test ./...` |
-| Single package | `go test ./internal/config/...` |
-| Single test | `go test -run TestName ./...` |
-| Lint | `go vet ./...` |
+```bash
+go build ./...                      # Build
+go test ./...                       # All tests
+go test ./internal/config/...       # Single package
+go test -run TestName ./...         # Single test
+go vet ./...                        # Lint
+```
 
-## Critical Patterns
+## Architecture
 
-**Bubbletea (Elm Architecture)**: Never block the UI thread. All I/O, network calls, and long operations must return `tea.Cmd` for async execution. The Update function must return immediately.
+**Bubbletea (Elm)**: Never block `Update()`. All I/O returns `tea.Cmd` for async execution.
 
-**Message Flow**: User input -> `tea.Msg` -> `Update()` returns new model + `tea.Cmd` -> command executes async -> produces new `tea.Msg` -> cycle repeats.
+**PTY Integration**: Embedded terminals via `creack/pty` + `hinshun/vt10x`. No tmux.
 
-**PTY Integration**: Terminal panes use `creack/pty` and `hinshun/vt10x`. Agent sessions run in embedded PTYs, not tmux.
-
-## Code Style
-
-- **Imports**: stdlib, blank line, external, blank line, internal (`github.com/techdufus/openkanban/...`)
-- **Naming**: PascalCase exported, camelCase private, snake_case JSON tags
-- **Errors**: Return error last, wrap with context via `fmt.Errorf`
-- **Config principle**: All user-facing behavior must be configurable
-
-## Package Responsibilities
+## Packages
 
 | Package | Purpose |
 |---------|---------|
-| `internal/ui/` | Bubbletea model, view, update cycle. All rendering logic. |
-| `internal/board/` | Ticket/Board data structures, persistence (JSON). |
-| `internal/agent/` | Agent config, status detection, context injection. |
-| `internal/terminal/` | PTY-based terminal panes for embedded agents. |
-| `internal/git/` | Worktree creation/removal, branch management. |
-| `internal/config/` | Global config loading from `~/.config/openkanban/config.json`. |
+| `ui/` | Bubbletea model, view, update cycle |
+| `project/` | Project/ticket data, persistence, filtering |
+| `agent/` | Agent config, status detection, context injection |
+| `terminal/` | PTY-based terminal panes |
+| `git/` | Worktree creation/removal |
+| `config/` | Config loading from `~/.config/openkanban/config.json` |
 
 ## Key Files
 
-- `internal/ui/model.go` - Main UI state and Update logic (the heart of the app)
-- `internal/ui/view.go` - All rendering code
-- `internal/board/board.go` - Ticket/Board types and persistence
-- `internal/config/config.go` - Config types and defaults
+- `ui/model.go` - Main state + Update (heart of app)
+- `ui/view.go` - All rendering
+- `project/project.go` - Project/ticket types
+- `config/config.go` - Config types + defaults
 
-## Active Refactoring
+## Style
 
-Issue #47: Transitioning from "Board" to "Project" model. Check issue for current terminology decisions before adding new board-related code.
+- **Imports**: stdlib, external, internal (blank lines between)
+- **Errors**: Return last, wrap with `fmt.Errorf`
+- **Config**: All behavior must be configurable
 
 ## Do Not
 
-- Block in `Update()` - always return `tea.Cmd` for async work
-- Use tmux directly - the app uses embedded PTY panes
+- Block in `Update()` - return `tea.Cmd`
+- Use tmux - embedded PTYs only
 - Add AI attribution to commits
-- Assume config values exist - check `config.go` for defaults and use them
+- Assume config exists - use defaults
 
 ## Commits
 
-Use conventional commits: `feat:`, `fix:`, `refactor:`, `perf:`, `docs:`, `test:`, `chore:`
+Conventional: `feat:`, `fix:`, `refactor:`, `perf:`, `docs:`, `test:`, `chore:`
