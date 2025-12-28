@@ -67,11 +67,6 @@ var newCmd = &cobra.Command{
 	Short: "Create a new project",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name := "default"
-		if len(args) > 0 {
-			name = args[0]
-		}
-
 		cfg, result, err := config.LoadWithValidation(cfgFile)
 		if err != nil || (result != nil && result.HasErrors()) {
 			if result != nil && result.HasErrors() {
@@ -89,6 +84,11 @@ var newCmd = &cobra.Command{
 		repoPath, err = filepath.Abs(repoPath)
 		if err != nil {
 			return fmt.Errorf("failed to resolve path: %w", err)
+		}
+
+		name := filepath.Base(repoPath)
+		if len(args) > 0 {
+			name = args[0]
 		}
 
 		return app.CreateProject(cfg, name, repoPath)
