@@ -73,8 +73,8 @@ jobs:
       - name: Create and push tag
         if: steps.check-tag.outputs.tagged == 'false' && steps.check-changes.outputs.changed == 'true'
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "openkanban[bot]"
+          git config user.email "openkanban[bot]@users.noreply.github.com"
           git tag ${{ steps.version.outputs.new_tag }}
           git push origin ${{ steps.version.outputs.new_tag }}
 
