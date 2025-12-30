@@ -165,6 +165,35 @@ OpenKanban has deep integration with OpenCode. When enabled, it starts an OpenCo
 
 When `server_enabled` is false, OpenCode runs in standalone mode per-ticket with basic status detection.
 
+## In-App Settings
+
+Press `O` to open the settings menu. You can configure these options without editing the config file:
+
+| Setting | Description |
+|---------|-------------|
+| Default Agent | Which agent to spawn (opencode, claude, aider) |
+| Confirm Quit | Prompt before quitting with running agents |
+| Branch Prefix | Prefix for auto-generated branch names |
+| Delete Worktree | Remove git worktree when deleting tickets |
+| Delete Branch | Delete git branch when deleting tickets |
+| Force Cleanup | Force worktree removal even with uncommitted changes |
+| Show Sidebar | Toggle project sidebar visibility |
+| Filter Project | Show only tickets from a specific project |
+
+Changes are saved immediately to `~/.config/openkanban/config.json`.
+
+## Ticket Labels and Priority
+
+Tickets support labels and priority levels:
+
+**Labels**: Comma-separated tags (e.g., `bug, urgent, frontend`). Labels appear on ticket cards and can help organize work.
+
+**Priority**: 1 (Critical) to 5 (Lowest). High-priority tickets (1-2) show a visual indicator on the card:
+- `!!` - Critical (priority 1)
+- `!` - High (priority 2)
+
+Set labels and priority when creating or editing a ticket (`n` or `e`).
+
 ## Keybindings
 
 All keybindings are shown in-app with `?`. Custom keybindings coming soon.

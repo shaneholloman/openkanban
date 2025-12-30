@@ -379,7 +379,24 @@ func (m *Model) renderTicket(ticket *board.Ticket, isSelected, isHovered bool, w
 			Render("✗")
 	}
 
+	var priorityBadge string
+	if ticket.Priority > 0 && ticket.Priority <= 2 {
+		priorityColors := map[int]lipgloss.Color{
+			1: colorRed,
+			2: lipgloss.Color("#fab387"),
+		}
+		priorityLabels := map[int]string{
+			1: "!!",
+			2: "!",
+		}
+		pColor := priorityColors[ticket.Priority]
+		priorityBadge = lipgloss.NewStyle().Foreground(pColor).Bold(true).Render(priorityLabels[ticket.Priority])
+	}
+
 	var headerParts []string
+	if priorityBadge != "" {
+		headerParts = append(headerParts, priorityBadge)
+	}
 	if projectBadge != "" {
 		headerParts = append(headerParts, projectBadge)
 	}
@@ -790,6 +807,8 @@ func (m *Model) renderTicketForm() string {
 	titleLabel := labelStyle
 	descLabel := labelStyle
 	branchLabel := labelStyle
+	labelsLabel := labelStyle
+	priorityLabel := labelStyle
 	projectLabel := labelStyle
 
 	switch m.ticketFormField {
@@ -799,6 +818,10 @@ func (m *Model) renderTicketForm() string {
 		descLabel = activeLabelStyle
 	case formFieldBranch:
 		branchLabel = activeLabelStyle
+	case formFieldLabels:
+		labelsLabel = activeLabelStyle
+	case formFieldPriority:
+		priorityLabel = activeLabelStyle
 	case formFieldProject:
 		projectLabel = activeLabelStyle
 	}
@@ -814,6 +837,7 @@ func (m *Model) renderTicketForm() string {
 		branchDesc = descriptionStyle.Render("Auto-generated from title if left empty")
 	}
 
+	priorityField := m.renderPrioritySelector()
 	projectField := m.renderProjectSelector()
 
 	titleCharCount := fmt.Sprintf("%d/100", len(m.titleInput.Value()))
@@ -828,7 +852,7 @@ func (m *Model) renderTicketForm() string {
 	focusIndicator := lipgloss.NewStyle().Foreground(colorTeal).Render("▸ ")
 	noFocus := "  "
 
-	titleFocus, descFocus, branchFocus, projectFocus := noFocus, noFocus, noFocus, noFocus
+	titleFocus, descFocus, branchFocus, labelsFocus, priorityFocus, projectFocus := noFocus, noFocus, noFocus, noFocus, noFocus, noFocus
 	switch m.ticketFormField {
 	case formFieldTitle:
 		titleFocus = focusIndicator
@@ -836,6 +860,10 @@ func (m *Model) renderTicketForm() string {
 		descFocus = focusIndicator
 	case formFieldBranch:
 		branchFocus = focusIndicator
+	case formFieldLabels:
+		labelsFocus = focusIndicator
+	case formFieldPriority:
+		priorityFocus = focusIndicator
 	case formFieldProject:
 		projectFocus = focusIndicator
 	}
@@ -849,7 +877,13 @@ func (m *Model) renderTicketForm() string {
 		"  " + m.descInput.View() + "\n\n" +
 		branchFocus + branchLabel.Render("Branch") + "\n" +
 		"  " + branchDesc + "\n" +
-		"  " + branchField + "\n"
+		"  " + branchField + "\n\n" +
+		labelsFocus + labelsLabel.Render("Labels") + "\n" +
+		"  " + descriptionStyle.Render("Comma-separated tags (e.g. bug, urgent)") + "\n" +
+		"  " + m.labelsInput.View() + "\n\n" +
+		priorityFocus + priorityLabel.Render("Priority") + "\n" +
+		"  " + descriptionStyle.Render("1 = highest, 5 = lowest") + "\n" +
+		"  " + priorityField + "\n"
 
 	if !isEdit {
 		content += "\n" + projectFocus + projectLabel.Render("Project") + "\n" +
@@ -866,6 +900,38 @@ func (m *Model) renderTicketForm() string {
 		BorderForeground(colorGreen).
 		Padding(1, 2).
 		Render(content)
+}
+
+func (m *Model) renderPrioritySelector() string {
+	priorities := []struct {
+		level int
+		label string
+		color lipgloss.Color
+	}{
+		{1, "Critical", colorRed},
+		{2, "High", lipgloss.Color("#fab387")},
+		{3, "Medium", colorYellow},
+		{4, "Low", colorBlue},
+		{5, "Lowest", colorMuted},
+	}
+
+	var parts []string
+	for _, p := range priorities {
+		style := lipgloss.NewStyle().Foreground(p.color)
+		if m.ticketPriority == p.level {
+			style = style.Bold(true).Background(colorSurface).Padding(0, 1)
+			parts = append(parts, style.Render(fmt.Sprintf("● %s", p.label)))
+		} else {
+			parts = append(parts, style.Render(fmt.Sprintf("○ %d", p.level)))
+		}
+	}
+
+	hint := ""
+	if m.ticketFormField == formFieldPriority {
+		hint = "  " + dimStyle.Render("← → or 1-5")
+	}
+
+	return strings.Join(parts, "  ") + hint
 }
 
 func (m *Model) renderWithOverlay(overlay string) string {

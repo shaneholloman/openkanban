@@ -50,7 +50,9 @@ const (
 	formFieldTitle       = 0
 	formFieldDescription = 1
 	formFieldBranch      = 2
-	formFieldProject     = 3
+	formFieldLabels      = 3
+	formFieldPriority    = 4
+	formFieldProject     = 5
 )
 
 type Model struct {
@@ -91,6 +93,8 @@ type Model struct {
 	titleInput         textinput.Model
 	descInput          textarea.Model
 	branchInput        textinput.Model
+	labelsInput        textinput.Model
+	ticketPriority     int
 	projectInput       textinput.Model
 	ticketFormField    int
 	editingTicketID    board.TicketID
@@ -141,6 +145,11 @@ func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, agentM
 	bi.Placeholder = "Auto-generated from title..."
 	bi.CharLimit = 100
 	bi.Width = 40
+
+	li := textinput.New()
+	li.Placeholder = "bug, urgent, frontend (comma-separated)"
+	li.CharLimit = 200
+	li.Width = 40
 
 	pi := textinput.New()
 	pi.Placeholder = "Select project..."
@@ -193,6 +202,8 @@ func NewModel(cfg *config.Config, globalStore *project.GlobalTicketStore, agentM
 		titleInput:      ti,
 		descInput:       di,
 		branchInput:     bi,
+		labelsInput:     li,
+		ticketPriority:  3,
 		projectInput:    pi,
 		settingsInput:   si,
 		filterInput:     fi,
@@ -914,7 +925,7 @@ func (m *Model) handleTicketFormMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	formTop := (m.height - 20) / 2
+	formTop := (m.height - 28) / 2
 	relY := msg.Y - formTop
 
 	var clickedField int = -1
@@ -923,9 +934,13 @@ func (m *Model) handleTicketFormMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		clickedField = formFieldTitle
 	case relY >= 6 && relY <= 9:
 		clickedField = formFieldDescription
-	case relY >= 11 && relY <= 12:
+	case relY >= 11 && relY <= 13:
 		clickedField = formFieldBranch
-	case relY >= 14:
+	case relY >= 15 && relY <= 17:
+		clickedField = formFieldLabels
+	case relY >= 19 && relY <= 21:
+		clickedField = formFieldPriority
+	case relY >= 23:
 		clickedField = formFieldProject
 	}
 
@@ -936,7 +951,7 @@ func (m *Model) handleTicketFormMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 		if clickedField == formFieldProject && !m.showAddProjectForm {
 			projects := m.globalStore.Projects()
-			projectRelY := relY - 15
+			projectRelY := relY - 24
 			if projectRelY >= 0 && projectRelY <= len(projects) {
 				m.projectListIndex = projectRelY
 				if projectRelY == len(projects) {
@@ -962,6 +977,8 @@ func (m *Model) handleTicketFormMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if !m.branchLocked {
 			m.branchInput, cmd = m.branchInput.Update(msg)
 		}
+	case formFieldLabels:
+		m.labelsInput, cmd = m.labelsInput.Update(msg)
 	}
 
 	return m, cmd
@@ -1035,6 +1052,10 @@ func (m *Model) handleTicketForm(msg tea.KeyMsg, isEdit bool) (tea.Model, tea.Cm
 		if !m.branchLocked {
 			m.branchInput, cmd = m.branchInput.Update(msg)
 		}
+	case formFieldLabels:
+		m.labelsInput, cmd = m.labelsInput.Update(msg)
+	case formFieldPriority:
+		cmd = m.handlePriorityNav(msg)
 	case formFieldProject:
 		if m.showAddProjectForm {
 			m.addProjectPath, cmd = m.addProjectPath.Update(msg)
@@ -1043,6 +1064,24 @@ func (m *Model) handleTicketForm(msg tea.KeyMsg, isEdit bool) (tea.Model, tea.Cm
 		}
 	}
 	return m, cmd
+}
+
+func (m *Model) handlePriorityNav(msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
+	case "j", "down", "l", "right":
+		m.ticketPriority++
+		if m.ticketPriority > 5 {
+			m.ticketPriority = 1
+		}
+	case "k", "up", "h", "left":
+		m.ticketPriority--
+		if m.ticketPriority < 1 {
+			m.ticketPriority = 5
+		}
+	case "1", "2", "3", "4", "5":
+		m.ticketPriority = int(msg.String()[0] - '0')
+	}
+	return nil
 }
 
 func (m *Model) handleProjectListNav(msg tea.KeyMsg) tea.Cmd {
@@ -1156,7 +1195,7 @@ func (m *Model) nextFormField(isEdit bool) *Model {
 	m.blurAllFormFields()
 	m.ticketFormField++
 
-	maxField := formFieldBranch
+	maxField := formFieldPriority
 	if !isEdit {
 		maxField = formFieldProject
 	}
@@ -1178,7 +1217,7 @@ func (m *Model) prevFormField(isEdit bool) *Model {
 	m.blurAllFormFields()
 	m.ticketFormField--
 
-	maxField := formFieldBranch
+	maxField := formFieldPriority
 	if !isEdit {
 		maxField = formFieldProject
 	}
@@ -1200,6 +1239,7 @@ func (m *Model) blurAllFormFields() {
 	m.titleInput.Blur()
 	m.descInput.Blur()
 	m.branchInput.Blur()
+	m.labelsInput.Blur()
 	m.projectInput.Blur()
 }
 
@@ -1211,6 +1251,10 @@ func (m *Model) focusCurrentField() {
 		m.descInput.Focus()
 	case formFieldBranch:
 		m.branchInput.Focus()
+	case formFieldLabels:
+		m.labelsInput.Focus()
+	case formFieldPriority:
+		break
 	case formFieldProject:
 		m.projectInput.Focus()
 	}
@@ -1234,6 +1278,8 @@ func (m *Model) saveTicketForm(isEdit bool) (tea.Model, tea.Cmd) {
 		branchName = m.generateBranchNameFromTitle(title, m.selectedProject)
 	}
 
+	labels := m.parseLabels(m.labelsInput.Value())
+
 	if isEdit && m.editingTicketID != "" {
 		ticket, _ := m.globalStore.Get(m.editingTicketID)
 		if ticket != nil {
@@ -1242,6 +1288,8 @@ func (m *Model) saveTicketForm(isEdit bool) (tea.Model, tea.Cmd) {
 			if !m.branchLocked {
 				ticket.BranchName = branchName
 			}
+			ticket.Labels = labels
+			ticket.Priority = m.ticketPriority
 			ticket.Touch()
 			m.saveTicket(ticket)
 			m.refreshColumnTickets()
@@ -1251,6 +1299,8 @@ func (m *Model) saveTicketForm(isEdit bool) (tea.Model, tea.Cmd) {
 		ticket := board.NewTicket(title, m.selectedProject.ID)
 		ticket.Description = desc
 		ticket.BranchName = branchName
+		ticket.Labels = labels
+		ticket.Priority = m.ticketPriority
 		ticket.Status = m.columns[m.activeColumn].Status
 		m.globalStore.Add(ticket)
 		m.refreshColumnTickets()
@@ -1266,6 +1316,21 @@ func (m *Model) saveTicketForm(isEdit bool) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) parseLabels(input string) []string {
+	if strings.TrimSpace(input) == "" {
+		return []string{}
+	}
+	parts := strings.Split(input, ",")
+	var labels []string
+	for _, p := range parts {
+		label := strings.TrimSpace(p)
+		if label != "" {
+			labels = append(labels, label)
+		}
+	}
+	return labels
+}
+
 type settingsField struct {
 	key         string
 	label       string
@@ -1275,6 +1340,11 @@ type settingsField struct {
 
 var settingsFields = []settingsField{
 	{"default_agent", "Default Agent", "agent", "Agent to spawn for new tickets (opencode, claude, aider)"},
+	{"confirm_quit", "Confirm Quit", "toggle", "Prompt before quitting with running agents"},
+	{"branch_prefix", "Branch Prefix", "text", "Prefix for auto-generated branch names (e.g. task/, feature/)"},
+	{"delete_worktree", "Delete Worktree", "toggle", "Remove git worktree when deleting tickets"},
+	{"delete_branch", "Delete Branch", "toggle", "Delete git branch when deleting tickets"},
+	{"force_cleanup", "Force Cleanup", "toggle", "Force worktree removal even with uncommitted changes"},
 	{"sidebar_visible", "Show Sidebar", "toggle", "Toggle the project sidebar visibility"},
 	{"filter_project", "Filter Project", "project", "Show only tickets from a specific project"},
 }
@@ -1401,6 +1471,12 @@ func (m *Model) enterSettingsEdit() (tea.Model, tea.Cmd) {
 		m.notify("Default agent: " + nextAgent)
 		return m, nil
 
+	case "text":
+		m.settingsEditing = true
+		m.settingsInput.SetValue(m.getSettingsValue(field.key))
+		m.settingsInput.Focus()
+		return m, textinput.Blink
+
 	default:
 		m.settingsEditing = true
 		m.settingsInput.SetValue(m.getSettingsValue(field.key))
@@ -1413,6 +1489,28 @@ func (m *Model) getSettingsValue(key string) string {
 	switch key {
 	case "default_agent":
 		return m.config.Defaults.DefaultAgent
+	case "confirm_quit":
+		if m.config.Behavior.ConfirmQuitWithAgents {
+			return "On"
+		}
+		return "Off"
+	case "branch_prefix":
+		return m.config.Defaults.BranchPrefix
+	case "delete_worktree":
+		if m.config.Cleanup.DeleteWorktree {
+			return "On"
+		}
+		return "Off"
+	case "delete_branch":
+		if m.config.Cleanup.DeleteBranch {
+			return "On"
+		}
+		return "Off"
+	case "force_cleanup":
+		if m.config.Cleanup.ForceWorktreeRemoval {
+			return "On"
+		}
+		return "Off"
 	case "filter_project":
 		if m.filterProjectID == "" {
 			return "All Projects"
@@ -1433,6 +1531,21 @@ func (m *Model) applySettingsValue(key, value string) {
 	switch key {
 	case "default_agent":
 		m.config.Defaults.DefaultAgent = value
+		m.config.Save("")
+	case "confirm_quit":
+		m.config.Behavior.ConfirmQuitWithAgents = !m.config.Behavior.ConfirmQuitWithAgents
+		m.config.Save("")
+	case "branch_prefix":
+		m.config.Defaults.BranchPrefix = value
+		m.config.Save("")
+	case "delete_worktree":
+		m.config.Cleanup.DeleteWorktree = !m.config.Cleanup.DeleteWorktree
+		m.config.Save("")
+	case "delete_branch":
+		m.config.Cleanup.DeleteBranch = !m.config.Cleanup.DeleteBranch
+		m.config.Save("")
+	case "force_cleanup":
+		m.config.Cleanup.ForceWorktreeRemoval = !m.config.Cleanup.ForceWorktreeRemoval
 		m.config.Save("")
 	case "sidebar_visible":
 		m.sidebarVisible = !m.sidebarVisible
@@ -1622,6 +1735,8 @@ func (m *Model) createNewTicket() (tea.Model, tea.Cmd) {
 	m.titleInput.Reset()
 	m.descInput.Reset()
 	m.branchInput.Reset()
+	m.labelsInput.Reset()
+	m.ticketPriority = 3
 	m.blurAllFormFields()
 	m.titleInput.Focus()
 	return m, m.titleInput.Cursor.BlinkCmd()
@@ -1645,6 +1760,11 @@ func (m *Model) editTicket() (tea.Model, tea.Cmd) {
 		m.branchInput.SetValue(ticket.BranchName)
 	} else if m.selectedProject != nil {
 		m.branchInput.SetValue(m.generateBranchNameFromTitle(ticket.Title, m.selectedProject))
+	}
+	m.labelsInput.SetValue(strings.Join(ticket.Labels, ", "))
+	m.ticketPriority = ticket.Priority
+	if m.ticketPriority < 1 || m.ticketPriority > 5 {
+		m.ticketPriority = 3
 	}
 	m.blurAllFormFields()
 	m.titleInput.Focus()
