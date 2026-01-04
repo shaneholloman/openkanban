@@ -72,18 +72,8 @@ func (d *StatusDetector) DetectStatusWithPort(agentType, sessionID, worktreePath
 		return status
 	}
 
-	if agentType == "opencode" {
-		if port > 0 {
-			if status := d.queryOpencodeAPIOnPort(port); status != board.AgentNone {
-				return status
-			}
-		} else if status := d.queryOpencodeStatusByDirectory(worktreePath); status != board.AgentNone {
-			return status
-		} else if sessionID != "" {
-			if status := d.queryOpencodeAPI(sessionID); status != board.AgentNone {
-				return status
-			}
-		}
+	if agentType == "opencode" && port > 0 {
+		return d.queryOpencodeAPIOnPort(port)
 	}
 
 	if terminalContent != "" {
@@ -92,7 +82,9 @@ func (d *StatusDetector) DetectStatusWithPort(agentType, sessionID, worktreePath
 		}
 	}
 
-	return board.AgentIdle
+	// Return AgentNone when status cannot be determined.
+	// The UI will not show a status indicator for unknown status.
+	return board.AgentNone
 }
 
 func (d *StatusDetector) detectFromTerminalContent(agentType, content string) board.AgentStatus {
@@ -125,6 +117,9 @@ func (d *StatusDetector) detectCodingAgentStatus(recentLower, fullLower string) 
 		"confirm",
 		"permission",
 		"approve",
+		"allow",
+		"accept",
+		"proceed",
 	}
 	for _, pattern := range waitingPatterns {
 		if strings.Contains(recentLower, pattern) {
@@ -142,10 +137,31 @@ func (d *StatusDetector) detectCodingAgentStatus(recentLower, fullLower string) 
 		"searching",
 		"analyzing",
 		"generating",
-		"...",
+		"fetching",
+		"loading",
+		"compiling",
+		"building",
+		"installing",
+		"calling",
+		"invoking",
 		"━",
 		"█",
 		"▓",
+		"●",
+		"◐",
+		"◓",
+		"◑",
+		"◒",
+		"⠋",
+		"⠙",
+		"⠹",
+		"⠸",
+		"⠼",
+		"⠴",
+		"⠦",
+		"⠧",
+		"⠇",
+		"⠏",
 	}
 	for _, pattern := range workingPatterns {
 		if strings.Contains(recentLower, pattern) {
@@ -160,6 +176,9 @@ func (d *StatusDetector) detectCodingAgentStatus(recentLower, fullLower string) 
 		"rate limit",
 		"quota exceeded",
 		"api error",
+		"timeout",
+		"connection refused",
+		"unauthorized",
 	}
 	for _, pattern := range errorPatterns {
 		if strings.Contains(recentLower, pattern) {
@@ -168,13 +187,13 @@ func (d *StatusDetector) detectCodingAgentStatus(recentLower, fullLower string) 
 	}
 
 	idlePatterns := []string{
-		">",
-		"$",
-		"ready",
-		"idle",
+		"$/",
+		"cost:",
+		"tokens:",
+		"messages:",
 	}
 	for _, pattern := range idlePatterns {
-		if strings.HasSuffix(strings.TrimSpace(recentLower), pattern) {
+		if strings.Contains(recentLower, pattern) {
 			return board.AgentIdle
 		}
 	}
@@ -263,31 +282,38 @@ func (d *StatusDetector) queryOpencodeAPIOnPort(port int) board.AgentStatus {
 		return board.AgentNone
 	}
 
-	var status board.AgentStatus = board.AgentNone
+	// OpenCode's /session/status only contains BUSY sessions.
+	// Empty response {} means all sessions are idle.
+	// If any session is busy, return working.
 	for _, sessionStatus := range statusResp {
-		mappedStatus := d.mapOpencodeStatus(sessionStatus)
-		if mappedStatus == board.AgentWorking {
-			status = board.AgentWorking
-			break
+		if sessionStatus.Type == "busy" {
+			d.statusCacheMu.Lock()
+			d.statusCache[cacheKey] = cachedStatus{
+				status:    board.AgentWorking,
+				timestamp: time.Now(),
+			}
+			d.statusCacheMu.Unlock()
+			return board.AgentWorking
 		}
-		if mappedStatus == board.AgentError && status != board.AgentWorking {
-			status = board.AgentError
-		}
-		if mappedStatus == board.AgentIdle && status == board.AgentNone {
-			status = board.AgentIdle
+		if sessionStatus.Type == "retry" {
+			d.statusCacheMu.Lock()
+			d.statusCache[cacheKey] = cachedStatus{
+				status:    board.AgentError,
+				timestamp: time.Now(),
+			}
+			d.statusCacheMu.Unlock()
+			return board.AgentError
 		}
 	}
 
-	if status != board.AgentNone {
-		d.statusCacheMu.Lock()
-		d.statusCache[cacheKey] = cachedStatus{
-			status:    status,
-			timestamp: time.Now(),
-		}
-		d.statusCacheMu.Unlock()
+	// Server responded but no busy sessions = idle
+	d.statusCacheMu.Lock()
+	d.statusCache[cacheKey] = cachedStatus{
+		status:    board.AgentIdle,
+		timestamp: time.Now(),
 	}
-
-	return status
+	d.statusCacheMu.Unlock()
+	return board.AgentIdle
 }
 
 func (d *StatusDetector) mapOpencodeStatus(s opencodeSessionStatus) board.AgentStatus {
@@ -303,9 +329,8 @@ func (d *StatusDetector) mapOpencodeStatus(s opencodeSessionStatus) board.AgentS
 	}
 }
 
-// queryOpencodeStatusByDirectory queries the OpenCode API for session status.
-// Since OpenKanban runs one opencode server per project, we simply check if
-// ANY session is busy/working. This avoids the slow `opencode session list` call.
+// queryOpencodeStatusByDirectory queries the OpenCode API on the default port.
+// This is a fallback for when no specific port is available.
 func (d *StatusDetector) queryOpencodeStatusByDirectory(_ string) board.AgentStatus {
 	cacheKey := "opencode-api"
 
@@ -333,31 +358,20 @@ func (d *StatusDetector) queryOpencodeStatusByDirectory(_ string) board.AgentSta
 		return board.AgentNone
 	}
 
-	var status board.AgentStatus = board.AgentNone
 	for _, sessionStatus := range statusResp {
-		mappedStatus := d.mapOpencodeStatus(sessionStatus)
-		if mappedStatus == board.AgentWorking {
-			status = board.AgentWorking
-			break
-		}
-		if mappedStatus == board.AgentError && status != board.AgentWorking {
-			status = board.AgentError
-		}
-		if mappedStatus == board.AgentIdle && status == board.AgentNone {
-			status = board.AgentIdle
+		status := d.mapOpencodeStatus(sessionStatus)
+		if status != board.AgentNone {
+			d.statusCacheMu.Lock()
+			d.statusCache[cacheKey] = cachedStatus{
+				status:    status,
+				timestamp: time.Now(),
+			}
+			d.statusCacheMu.Unlock()
+			return status
 		}
 	}
 
-	if status != board.AgentNone {
-		d.statusCacheMu.Lock()
-		d.statusCache[cacheKey] = cachedStatus{
-			status:    status,
-			timestamp: time.Now(),
-		}
-		d.statusCacheMu.Unlock()
-	}
-
-	return status
+	return board.AgentNone
 }
 
 func (d *StatusDetector) readStatusFile(sessionName string) board.AgentStatus {
