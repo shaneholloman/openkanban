@@ -2564,6 +2564,16 @@ func (m *Model) prepareSpawn(ticket *board.Ticket, proj *project.Project, agentC
 		pane := terminal.New(string(ticketID), width, height)
 		pane.SetWorkdir(worktreePath)
 
+		// Set session name for terminal identification (priority: AgentSessionID > branch > ticket)
+		sessionName := string(ticketID)
+		if branchName != "" {
+			sessionName = branchName
+		}
+		if ticket.AgentSessionID != "" {
+			sessionName = ticket.AgentSessionID
+		}
+		pane.SetSessionName(sessionName)
+
 		isNewSession := ticket.AgentSpawnedAt == nil
 		args := make([]string, len(agentCfg.Args))
 		copy(args, agentCfg.Args)

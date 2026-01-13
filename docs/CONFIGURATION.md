@@ -241,6 +241,20 @@ OpenKanban has deep integration with OpenCode. When enabled, it starts an OpenCo
 
 When `server_enabled` is false, OpenCode runs in standalone mode per-ticket with basic status detection.
 
+## Claude Code Integration
+
+When using Claude Code with the [oh-my-claude](https://github.com/TechDufus/oh-my-claude) plugin, OpenKanban automatically receives live status updates. No configuration required.
+
+**How it works:** OpenKanban sets `OPENKANBAN_SESSION` in agent terminals. oh-my-claude detects this and writes status to `~/.cache/openkanban-status/`. Status updates appear in real-time on your ticket cards.
+
+| Status | Meaning |
+|--------|---------|
+| `idle` | Ready for input |
+| `working` | Processing prompt or tools |
+| `waiting` | Awaiting user permission |
+
+To enable: Install [oh-my-claude](https://github.com/TechDufus/oh-my-claude) in Claude Code. That's it.
+
 ## In-App Settings
 
 Press `O` to open the settings menu. You can configure these options without editing the config file:

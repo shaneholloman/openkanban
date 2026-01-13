@@ -25,9 +25,10 @@ type Pane struct {
 	cmd     *exec.Cmd
 	mu      sync.Mutex
 	running bool
-	exitErr error
-	workdir string
-	width   int
+	exitErr     error
+	workdir     string
+	sessionName string
+	width       int
 	height  int
 
 	cachedView      string
@@ -56,6 +57,11 @@ func (p *Pane) SetWorkdir(dir string) {
 
 func (p *Pane) GetWorkdir() string {
 	return p.workdir
+}
+
+// SetSessionName sets the session name for OPENKANBAN_SESSION env var
+func (p *Pane) SetSessionName(name string) {
+	p.sessionName = name
 }
 
 // Running returns whether the pane has a running process
@@ -135,7 +141,7 @@ func (p *Pane) Start(command string, args ...string) tea.Cmd {
 
 		// Build command
 		p.cmd = exec.Command(command, args...)
-		p.cmd.Env = buildCleanEnv()
+		p.cmd.Env = buildCleanEnv(p.sessionName)
 
 		// Set working directory if specified
 		if p.workdir != "" {
@@ -630,7 +636,7 @@ func colorToANSI(c vt10x.Color, isFG bool) string {
 	return fmt.Sprintf("%d;2;%d;%d;%d", base, r, g, b)
 }
 
-func buildCleanEnv() []string {
+func buildCleanEnv(sessionName string) []string {
 	var env []string
 	for _, e := range os.Environ() {
 		key := strings.Split(e, "=")[0]
@@ -649,5 +655,8 @@ func buildCleanEnv() []string {
 		env = append(env, e)
 	}
 	env = append(env, "TERM=xterm-256color")
+	if sessionName != "" {
+		env = append(env, "OPENKANBAN_SESSION="+sessionName)
+	}
 	return env
 }

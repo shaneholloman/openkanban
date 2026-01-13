@@ -442,12 +442,12 @@ func (d *StatusDetector) InvalidateCache(sessionName string) {
 func WriteStatusFile(sessionName string, status board.AgentStatus) error {
 	homeDir, _ := os.UserHomeDir()
 	statusDir := filepath.Join(homeDir, ".cache", "openkanban-status")
+	statusFile := filepath.Join(statusDir, sessionName+".status")
 
-	if err := os.MkdirAll(statusDir, 0755); err != nil {
+	// Create parent directory for status file (handles slashed session names like "task/my-feature")
+	if err := os.MkdirAll(filepath.Dir(statusFile), 0755); err != nil {
 		return err
 	}
-
-	statusFile := filepath.Join(statusDir, sessionName+".status")
 	var statusStr string
 
 	switch status {
