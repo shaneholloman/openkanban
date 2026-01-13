@@ -380,11 +380,14 @@ func (p *Pane) HandleMouse(msg tea.MouseMsg) {
 		return
 	}
 
-	// Block all motion events - only handle press for clicks, wheel for scroll
-	if msg.Action == tea.MouseActionMotion {
+	// Block all mouse events unless app has enabled mouse tracking.
+	// Without mouse tracking, X10 sequences appear as garbage text.
+	// Scroll requires scrollback buffer which doesn't exist (see #95).
+	if !p.mouseEnabled {
 		return
 	}
 
+	// Forward mouse events only when app has enabled mouse tracking
 	var seq []byte
 	x, y := msg.X+1, msg.Y+1
 	if x > 223 {
@@ -395,24 +398,16 @@ func (p *Pane) HandleMouse(msg tea.MouseMsg) {
 	}
 
 	switch msg.Button {
-	// Scroll wheel: always forward (apps handle scroll internally)
 	case tea.MouseButtonWheelUp:
 		seq = []byte{'\x1b', '[', 'M', byte(64 + 32), byte(x + 32), byte(y + 32)}
 	case tea.MouseButtonWheelDown:
 		seq = []byte{'\x1b', '[', 'M', byte(65 + 32), byte(x + 32), byte(y + 32)}
-	// Button clicks: only forward press when mouse mode is enabled
 	case tea.MouseButtonLeft:
-		if p.mouseEnabled && msg.Action == tea.MouseActionPress {
-			seq = []byte{'\x1b', '[', 'M', byte(0 + 32), byte(x + 32), byte(y + 32)}
-		}
+		seq = []byte{'\x1b', '[', 'M', byte(0 + 32), byte(x + 32), byte(y + 32)}
 	case tea.MouseButtonRight:
-		if p.mouseEnabled && msg.Action == tea.MouseActionPress {
-			seq = []byte{'\x1b', '[', 'M', byte(2 + 32), byte(x + 32), byte(y + 32)}
-		}
+		seq = []byte{'\x1b', '[', 'M', byte(2 + 32), byte(x + 32), byte(y + 32)}
 	case tea.MouseButtonMiddle:
-		if p.mouseEnabled && msg.Action == tea.MouseActionPress {
-			seq = []byte{'\x1b', '[', 'M', byte(1 + 32), byte(x + 32), byte(y + 32)}
-		}
+		seq = []byte{'\x1b', '[', 'M', byte(1 + 32), byte(x + 32), byte(y + 32)}
 	}
 
 	if len(seq) > 0 {
