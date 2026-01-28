@@ -2495,9 +2495,6 @@ func (m *Model) spawnAgent() (tea.Model, tea.Cmd) {
 
 	agentType := ticket.AgentType
 	if agentType == "" {
-		agentType = proj.Settings.DefaultAgent
-	}
-	if agentType == "" {
 		agentType = m.config.Defaults.DefaultAgent
 	}
 	agentCfg, ok := m.config.Agents[agentType]
@@ -2865,9 +2862,6 @@ func (m *Model) getAgentNames() []string {
 }
 
 func (m *Model) getDefaultAgent() string {
-	if m.selectedProject != nil && m.selectedProject.Settings.DefaultAgent != "" {
-		return m.selectedProject.Settings.DefaultAgent
-	}
 	return m.config.Defaults.DefaultAgent
 }
 

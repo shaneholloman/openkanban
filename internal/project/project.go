@@ -23,7 +23,6 @@ type Project struct {
 // ProjectSettings contains project-specific configuration.
 // These override global defaults from config.Config.
 type ProjectSettings struct {
-	DefaultAgent     string `json:"default_agent,omitempty"`
 	AutoSpawnAgent   bool   `json:"auto_spawn_agent"`
 	AutoCreateBranch bool   `json:"auto_create_branch"`
 	BranchPrefix     string `json:"branch_prefix,omitempty"`
