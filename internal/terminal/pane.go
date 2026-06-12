@@ -21,12 +21,12 @@ const (
 )
 
 type Pane struct {
-	id      string
-	vt      vt10x.Terminal
-	pty     *os.File
-	cmd     *exec.Cmd
-	mu      sync.Mutex
-	running bool
+	id          string
+	vt          vt10x.Terminal
+	pty         *os.File
+	cmd         *exec.Cmd
+	mu          sync.Mutex
+	running     bool
 	exitErr     error
 	workdir     string
 	sessionName string
@@ -42,10 +42,10 @@ type Pane struct {
 
 	// Scrollback and viewport state (Issue #95)
 	scrollback      *ScrollbackBuffer
-	altScreenActive bool     // tracks if child process is in alternate screen mode
-	viewportOffset  int      // lines scrolled back (0 = live view)
-	lastTopRow      []vt10x.Glyph // snapshot of row 0 before write for scroll detection
-	scrollbackSize  int      // configured scrollback buffer size
+	altScreenActive bool            // tracks if child process is in alternate screen mode
+	viewportOffset  int             // lines scrolled back (0 = live view)
+	lastTopRow      []vt10x.Glyph   // snapshot of row 0 before write for scroll detection
+	scrollbackSize  int             // configured scrollback buffer size
 	selection       *SelectionState // mouse text selection state
 }
 
@@ -182,7 +182,6 @@ type ExitFocusMsg struct{}
 func (p *Pane) Start(command string, args ...string) tea.Cmd {
 	return func() tea.Msg {
 		p.mu.Lock()
-		defer p.mu.Unlock()
 
 		// Build command
 		p.cmd = exec.Command(command, args...)
@@ -197,6 +196,7 @@ func (p *Pane) Start(command string, args ...string) tea.Cmd {
 		ptmx, err := pty.Start(p.cmd)
 		if err != nil {
 			p.exitErr = err
+			p.mu.Unlock()
 			return ExitMsg{PaneID: p.id, Err: err}
 		}
 		p.pty = ptmx
@@ -216,7 +216,9 @@ func (p *Pane) Start(command string, args ...string) tea.Cmd {
 		p.selection = NewSelectionState()
 
 		// Start read loop
-		return p.readOutputUnlocked()()
+		readCmd := p.readOutputUnlocked()
+		p.mu.Unlock()
+		return readCmd()
 	}
 }
 

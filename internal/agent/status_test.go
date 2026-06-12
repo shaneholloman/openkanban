@@ -1,6 +1,9 @@
 package agent
 
 import (
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -188,6 +191,51 @@ func TestDetectStatusWithPort_NotRunning(t *testing.T) {
 	result := d.DetectStatusWithPort("opencode", "session-1", "/path", 4097, false, "")
 	if result != board.AgentNone {
 		t.Errorf("DetectStatusWithPort with processRunning=false should return AgentNone; got %q", result)
+	}
+}
+
+func TestDetectStatusWithPort_PreservesTerminalStatusWhenNotRunning(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	d := NewStatusDetector()
+	d.statusDirs = []string{tmpDir}
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "done-session.status"), []byte("completed\n"), 0644); err != nil {
+		t.Fatalf("failed to create completed status file: %v", err)
+	}
+	if result := d.DetectStatusWithPort("opencode", "done-session", "/path", 4097, false, ""); result != board.AgentCompleted {
+		t.Errorf("completed status should survive process exit; got %q", result)
+	}
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "working-session.status"), []byte("working\n"), 0644); err != nil {
+		t.Fatalf("failed to create working status file: %v", err)
+	}
+	if result := d.DetectStatusWithPort("opencode", "working-session", "/path", 4097, false, ""); result != board.AgentNone {
+		t.Errorf("transient working status should not survive process exit; got %q", result)
+	}
+}
+
+func TestDetectStatusWithPort_ScopesOpencodeSession(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/session/status" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"busy-session":{"type":"busy"}}`))
+	}))
+	defer server.Close()
+
+	d := NewStatusDetector()
+	d.httpClient = server.Client()
+	port := server.Listener.Addr().(*net.TCPAddr).Port
+
+	if result := d.DetectStatusWithPort("opencode", "idle-session", "/path", port, true, ""); result != board.AgentIdle {
+		t.Errorf("missing session should be scoped idle; got %q", result)
+	}
+
+	if result := d.DetectStatusWithPort("opencode", "busy-session", "/path", port, true, ""); result != board.AgentWorking {
+		t.Errorf("matching busy session should be working; got %q", result)
 	}
 }
 

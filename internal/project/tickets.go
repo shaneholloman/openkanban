@@ -22,6 +22,7 @@ func ticketsDir() string {
 	}
 	return filepath.Join(dir, "tickets")
 }
+
 const ticketsFile = "tickets.json"
 
 type TicketStore struct {
@@ -57,12 +58,14 @@ func LoadTicketStore(project *Project) (*TicketStore, error) {
 	if _, err := os.Stat(oldPath); err == nil {
 		if _, err := os.Stat(newPath); os.IsNotExist(err) {
 			// Old exists, new doesn't - migrate
-			data, readErr := os.ReadFile(oldPath)
-			if readErr == nil {
-				if writeErr := os.WriteFile(newPath, data, 0644); writeErr == nil {
-					log.Printf("Migrated tickets from %s to %s. You can safely delete the old .openkanban directory.", oldPath, newPath)
-				}
+			data, err := os.ReadFile(oldPath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read legacy tickets from %s: %w", oldPath, err)
 			}
+			if err := os.WriteFile(newPath, data, 0644); err != nil {
+				return nil, fmt.Errorf("failed to migrate tickets to %s: %w", newPath, err)
+			}
+			log.Printf("Migrated tickets from %s to %s. You can safely delete the old .openkanban directory.", oldPath, newPath)
 		}
 	}
 
@@ -197,7 +200,7 @@ func LoadGlobalTicketStore(registry *ProjectRegistry) (*GlobalTicketStore, error
 	for _, p := range registry.Projects {
 		store, err := LoadTicketStore(p)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("failed to load tickets for project %q: %w", p.ID, err)
 		}
 
 		g.projects[p.ID] = p
@@ -350,6 +353,12 @@ func (g *GlobalTicketStore) RemoveProject(id string) error {
 			return err
 		}
 		log.Printf("Archived tickets to %s", dstPath)
+	}
+
+	for ticketID, ticket := range g.allTickets {
+		if ticket.ProjectID == id {
+			delete(g.allTickets, ticketID)
+		}
 	}
 
 	delete(g.projects, id)

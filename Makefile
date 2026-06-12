@@ -1,4 +1,4 @@
-.PHONY: build test test-unit test-integration test-all coverage lint clean help
+.PHONY: build test test-unit test-integration test-all coverage coverage-integration lint clean help
 
 GO := go
 BINARY := openkanban
@@ -13,7 +13,7 @@ test-unit:
 	$(GO) test -race ./...
 
 test-integration:
-	$(GO) test -race -tags integration ./...
+	$(GO) test -race -tags integration -run TestIntegration_ ./...
 
 test-all: test-unit test-integration
 

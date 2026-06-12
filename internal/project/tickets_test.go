@@ -228,7 +228,11 @@ func TestTicketStore_SaveAndLoad(t *testing.T) {
 
 func TestLoadTicketStore_NonexistentFile(t *testing.T) {
 	tmpDir := t.TempDir()
-	project := &Project{ID: "project-1", RepoPath: tmpDir}
+	configDir := filepath.Join(tmpDir, "config")
+	repoDir := filepath.Join(tmpDir, "repo")
+	t.Setenv("OPENKANBAN_CONFIG_DIR", configDir)
+
+	project := &Project{ID: "project-1", RepoPath: repoDir}
 
 	store, err := LoadTicketStore(project)
 	if err != nil {
@@ -237,6 +241,28 @@ func TestLoadTicketStore_NonexistentFile(t *testing.T) {
 
 	if store.Count() != 0 {
 		t.Errorf("loaded store should be empty; got %d tickets", store.Count())
+	}
+}
+
+func TestLoadGlobalTicketStore_ReturnsTicketLoadError(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir := filepath.Join(tmpDir, "config")
+	repoDir := filepath.Join(tmpDir, "repo")
+	t.Setenv("OPENKANBAN_CONFIG_DIR", configDir)
+
+	registry := newRegistry()
+	registry.Projects["project-1"] = &Project{ID: "project-1", Name: "Test", RepoPath: repoDir}
+
+	ticketsPath := filepath.Join(configDir, "tickets", "project-1.json")
+	if err := os.MkdirAll(filepath.Dir(ticketsPath), 0755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	if err := os.WriteFile(ticketsPath, []byte("{not-json"), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	if _, err := LoadGlobalTicketStore(registry); err == nil {
+		t.Fatal("LoadGlobalTicketStore should return ticket load errors")
 	}
 }
 
@@ -316,14 +342,20 @@ func TestGlobalTicketStore_RemoveProjectArchive(t *testing.T) {
 	registry.Add(p)
 
 	store := NewTicketStore(p.ID, p.RepoPath)
-	store.Add(board.NewTicket("Test ticket", p.ID))
+	ticket := board.NewTicket("Test ticket", p.ID)
+	store.Add(ticket)
 	if err := store.Save(); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 
-	// Create global store and add project
-	globalStore := NewGlobalTicketStore(registry)
-	globalStore.AddProject(p)
+	// Load global store from persisted tickets
+	globalStore, err := LoadGlobalTicketStore(registry)
+	if err != nil {
+		t.Fatalf("LoadGlobalTicketStore failed: %v", err)
+	}
+	if globalStore.Count() != 1 {
+		t.Fatalf("expected 1 ticket before removal, got %d", globalStore.Count())
+	}
 
 	// Verify ticket file exists
 	ticketPath := filepath.Join(configDir, "tickets", "project-1.json")
@@ -345,5 +377,8 @@ func TestGlobalTicketStore_RemoveProjectArchive(t *testing.T) {
 	// Verify original file no longer exists
 	if _, err := os.Stat(ticketPath); !os.IsNotExist(err) {
 		t.Error("original ticket file should not exist after archiving")
+	}
+	if globalStore.Count() != 0 {
+		t.Errorf("removed project tickets should be removed from aggregate index; got %d", globalStore.Count())
 	}
 }

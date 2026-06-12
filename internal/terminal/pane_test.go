@@ -3,7 +3,41 @@ package terminal
 import (
 	"fmt"
 	"testing"
+	"time"
 )
+
+func TestStartDoesNotHoldLockWhileReading(t *testing.T) {
+	pane := New("test", 80, 24, 100)
+	cmd := pane.Start("sleep", "5")
+
+	readDone := make(chan struct{})
+	go func() {
+		cmd()
+		close(readDone)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	stopDone := make(chan error, 1)
+	go func() {
+		stopDone <- pane.Stop()
+	}()
+
+	select {
+	case err := <-stopDone:
+		if err != nil {
+			t.Fatalf("Stop() error: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Stop blocked while Start was waiting for PTY output")
+	}
+
+	select {
+	case <-readDone:
+	case <-time.After(time.Second):
+		t.Fatal("read command did not return after Stop")
+	}
+}
 
 func TestDetectMouseModeChanges(t *testing.T) {
 	tests := []struct {
@@ -93,51 +127,51 @@ func TestDetectMouseModeChanges(t *testing.T) {
 
 func TestDetectAltScreenChanges(t *testing.T) {
 	tests := []struct {
-		name         string
-		data         []byte
-		initialState bool
+		name          string
+		data          []byte
+		initialState  bool
 		expectedState bool
 	}{
 		{
-			name:         "Enable alt screen 1049h",
-			data:         []byte("\x1b[?1049h"),
-			initialState: false,
+			name:          "Enable alt screen 1049h",
+			data:          []byte("\x1b[?1049h"),
+			initialState:  false,
 			expectedState: true,
 		},
 		{
-			name:         "Enable alt screen 47h",
-			data:         []byte("\x1b[?47h"),
-			initialState: false,
+			name:          "Enable alt screen 47h",
+			data:          []byte("\x1b[?47h"),
+			initialState:  false,
 			expectedState: true,
 		},
 		{
-			name:         "Disable alt screen 1049l",
-			data:         []byte("\x1b[?1049l"),
-			initialState: true,
+			name:          "Disable alt screen 1049l",
+			data:          []byte("\x1b[?1049l"),
+			initialState:  true,
 			expectedState: false,
 		},
 		{
-			name:         "Disable alt screen 47l",
-			data:         []byte("\x1b[?47l"),
-			initialState: true,
+			name:          "Disable alt screen 47l",
+			data:          []byte("\x1b[?47l"),
+			initialState:  true,
 			expectedState: false,
 		},
 		{
-			name:         "Sequence embedded in other data",
-			data:         []byte("Hello\x1b[?1049hWorld"),
-			initialState: false,
+			name:          "Sequence embedded in other data",
+			data:          []byte("Hello\x1b[?1049hWorld"),
+			initialState:  false,
 			expectedState: true,
 		},
 		{
-			name:         "No alt screen sequence - state unchanged",
-			data:         []byte("Hello World"),
-			initialState: false,
+			name:          "No alt screen sequence - state unchanged",
+			data:          []byte("Hello World"),
+			initialState:  false,
 			expectedState: false,
 		},
 		{
-			name:         "No alt screen sequence - enabled stays enabled",
-			data:         []byte("Hello World"),
-			initialState: true,
+			name:          "No alt screen sequence - enabled stays enabled",
+			data:          []byte("Hello World"),
+			initialState:  true,
 			expectedState: true,
 		},
 	}

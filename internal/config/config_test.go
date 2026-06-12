@@ -183,6 +183,8 @@ func TestLoad_NonExistentFile(t *testing.T) {
 }
 
 func TestLoad_EmptyPath(t *testing.T) {
+	t.Setenv("OPENKANBAN_CONFIG_DIR", t.TempDir())
+
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("Load(\"\") error: %v", err)

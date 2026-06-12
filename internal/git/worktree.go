@@ -38,6 +38,14 @@ func (m *WorktreeManager) CreateWorktree(branchName, baseBranch string) (string,
 
 	if _, err := os.Stat(worktreePath); err == nil {
 		if m.isValidWorktree(worktreePath) {
+			branch, err := m.branchForWorktree(worktreePath)
+			if err != nil {
+				return "", err
+			}
+			expectedBranch := strings.TrimPrefix(branchName, "refs/heads/")
+			if branch != expectedBranch {
+				return "", fmt.Errorf("worktree path %s is already used by branch %q, not %q", worktreePath, branch, expectedBranch)
+			}
 			return worktreePath, nil
 		}
 		os.RemoveAll(worktreePath)
@@ -69,6 +77,22 @@ func (m *WorktreeManager) isValidWorktree(path string) bool {
 	}
 	// Worktrees have a .git file (not directory) pointing to the main repo
 	return !info.IsDir()
+}
+
+func (m *WorktreeManager) branchForWorktree(path string) (string, error) {
+	worktrees, err := m.ListWorktrees()
+	if err != nil {
+		return "", err
+	}
+
+	cleanPath := filepath.Clean(path)
+	for _, wt := range worktrees {
+		if filepath.Clean(wt.Path) == cleanPath {
+			return wt.Branch, nil
+		}
+	}
+
+	return "", fmt.Errorf("worktree %s not found in git worktree list", path)
 }
 
 func (m *WorktreeManager) RemoveWorktree(worktreePath string) error {

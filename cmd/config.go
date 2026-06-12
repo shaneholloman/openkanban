@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -43,7 +44,7 @@ var validateCmd = &cobra.Command{
 		if result != nil && result.HasErrors() {
 			fmt.Fprintf(os.Stderr, "Config errors in %s:\n\n", path)
 			fmt.Fprint(os.Stderr, result.FormatErrors())
-			os.Exit(1)
+			return errors.New("invalid configuration")
 		}
 
 		if result != nil && result.HasWarnings() {
